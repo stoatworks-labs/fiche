@@ -767,6 +767,7 @@ struct Perturb
 	double shutter    = 1.0;  ///< the exposure window, scaled
 	bool resizeKeeps  = false;///< the store survives a reallocation
 	bool cuesRamp     = false;///< --cues: every control ramps
+	bool cueEarly     = false;///< a beat starts an act at the start of its frame
 };
 
 using CheckFn = int ( * )( const Perturb& );
@@ -808,6 +809,7 @@ bool startRig( Rig& rig, const Raster& raster, const Floats& picture, const Pert
 	rig.plugin.SetShowHandForTest( perturb.showHand );
 	rig.plugin.SetShutterScaleForTest( perturb.shutter );
 	rig.plugin.SetResizeKeepsStoreForTest( perturb.resizeKeeps );
+	rig.plugin.SetCueAtFrameStartForTest( perturb.cueEarly );
 	quiet( rig );
 	return true;
 }
@@ -865,6 +867,1679 @@ int runIdentity( const Perturb& perturb )
 		            reader::kScreenWidth / c.frameW, worst, kHalfUlp, bytesWrong, out.size() / 4 * 3 ) );
 	}
 	return Verdict();
+}
+
+//===========================================================================
+// Measuring helpers.
+//===========================================================================
+double toLinear( double code )
+{
+	return reader::ToLinear( std::clamp( code, 0.0, 1.0 ) );
+}
+
+double pxPerMm( const Rig& rig )
+{
+	return rig.width / reader::kScreenWidth;
+}
+
+/// Where card point ( x, y ) mm lands on the screen, in pixel-index units
+/// (pixel i's centre is at i), x right and y DOWN from the top row, for the
+/// carriage at ( px, py ) and magnification M.
+void toScreen( const Rig& rig, double x, double y, double px, double py, double M, double& i, double& j )
+{
+	const double k = M * pxPerMm( rig );
+	i              = ( x - px ) * k + 0.5 * rig.width - 0.5;
+	j              = ( y - py ) * k + 0.5 * rig.height - 0.5;
+}
+
+/// Light in a window: its total, centroid and second moment about the
+/// centroid, in pixels, of the linear intensity of channel R (y down).
+struct Moments
+{
+	double total = 0.0, cx = 0.0, cy = 0.0, m2 = 0.0;
+};
+Moments momentsOf( const Floats& out, int w, int h, double cx, double cy, double half )
+{
+	Moments m;
+	const int x0 = std::max( 0, static_cast< int >( std::floor( cx - half ) ) ), x1 = std::min( w - 1, static_cast< int >( std::ceil( cx + half ) ) );
+	const int y0 = std::max( 0, static_cast< int >( std::floor( cy - half ) ) ), y1 = std::min( h - 1, static_cast< int >( std::ceil( cy + half ) ) );
+	double sx = 0.0, sy = 0.0, sxx = 0.0;
+	for( int y = y0; y <= y1; ++y )
+		for( int x = x0; x <= x1; ++x )
+		{
+			const double v = toLinear( pixelTop( out, w, h, x, y )[ 0 ] );
+			m.total += v;
+			sx += v * x;
+			sy += v * y;
+			sxx += v * ( static_cast< double >( x ) * x + static_cast< double >( y ) * y );
+		}
+	if( m.total > 0.0 )
+	{
+		m.cx = sx / m.total;
+		m.cy = sy / m.total;
+		m.m2 = sxx / m.total - m.cx * m.cx - m.cy * m.cy;
+	}
+	return m;
+}
+
+/// One white texel on black at ( tx, ty ), GL rows (bottom first).
+Floats dotCard( int w, int h, const std::vector< std::pair< int, int > >& dots )
+{
+	Floats card = flatCard( w, h, 0.0f, 0.0f, 0.0f );
+	for( const auto& d : dots )
+		for( int c = 0; c < 3; ++c )
+			card[ ( static_cast< size_t >( d.second ) * w + d.first ) * 4 + c ] = 1.0f;
+	return card;
+}
+
+/// The film point of texel ( tx, ty ) (GL rows) in frame ( col, row ).
+void texelOnCard( const reader::Card& c, int w, int h, int col, int row, double tx, double ty, double& x, double& y )
+{
+	x = c.FrameLeft( col ) + c.frameW * ( tx + 0.5 ) / w;
+	y = c.FrameTop( row ) + c.frameH * ( 1.0 - ( ty + 0.5 ) / h );
+}
+
+/// R is u across a frame and G is v DOWN it, in LINEAR light (coded as
+/// sRGB): the picture's centre then says where on the card the reader is
+/// pointed. Linear in light, because the reader averages light -- through the
+/// mips, the bilinear lookups and the taps -- and an average of a linear
+/// ramp is exact where an average of a code ramp is bent by the transfer.
+Floats coordinateCard( int w, int h )
+{
+	Floats card( static_cast< size_t >( w ) * h * 4 );
+	for( int y = 0; y < h; ++y )
+		for( int x = 0; x < w; ++x )
+		{
+			float* o = &card[ ( static_cast< size_t >( y ) * w + x ) * 4 ];
+			o[ 0 ]   = static_cast< float >( reader::ToCode( ( x + 0.5 ) / w ) );
+			o[ 1 ]   = static_cast< float >( reader::ToCode( 1.0 - ( y + 0.5 ) / h ) );
+			o[ 2 ]   = 0.0f;
+			o[ 3 ]   = 1.0f;
+		}
+	return card;
+}
+
+/// The coordinate card's reading at the screen's centre: the mean of the four
+/// central pixels, which straddle it symmetrically.
+void centreReading( const Rig& rig, const Floats& out, double& u, double& v )
+{
+	u = v = 0.0;
+	for( int dy = 0; dy < 2; ++dy )
+		for( int dx = 0; dx < 2; ++dx )
+		{
+			const float* p = pixelTop( out, rig.width, rig.height, rig.width / 2 - 1 + dx, rig.height / 2 - 1 + dy );
+			u += 0.25 * toLinear( p[ 0 ] );
+			v += 0.25 * toLinear( p[ 1 ] );
+		}
+}
+
+/// Which frame of the card holds film point ( x, y ), and where in it, or
+/// false if it is in a gutter or within `margin` mm of a frame's edge.
+bool frameAt( const reader::Card& c, double x, double y, double margin, double& u, double& v )
+{
+	const int col = static_cast< int >( std::floor( ( x - c.gridX + 0.5 * c.gutter ) / c.PitchX() ) );
+	const int row = static_cast< int >( std::floor( ( y - c.gridY + 0.5 * c.gutter ) / c.PitchY() ) );
+	if( col < 0 || col >= c.cols || row < 0 || row >= c.rows )
+		return false;
+	const double lx = x - c.FrameLeft( col ), ly = y - c.FrameTop( row );
+	if( lx < margin || lx > c.frameW - margin || ly < margin || ly > c.frameH - margin )
+		return false;
+	u = lx / c.frameW;
+	v = ly / c.frameH;
+	return true;
+}
+
+/// The bound on a position read off the coordinate card, in mm of film. The
+/// clip is held in linear light in RGBA16F, and each mip level is stored
+/// again in RGBA16F: a value below 1 loses up to one half-float ULP (2^-11)
+/// at every store when the GPU truncates (Apple's does), so a reading taken
+/// at a level-of-detail of L has passed 1 + ceil( L ) of them -- and one more
+/// in the filter, which Apple's GPU computes in the texture's own precision
+/// (a bilinear reading came back as an exact half, 1.04 ULP off). Across a
+/// frame of w mm, read at `texelsPerPixel` clip texels a screen pixel.
+double coordinateBound( double frameMm, double texelsPerPixel = 1.0 )
+{
+	const double stores = 2.0 + std::ceil( std::log2( std::max( texelsPerPixel, 1.0 ) ) - 1e-9 );
+	return frameMm * stores / 2048.0 + 1e-5;
+}
+
+//===========================================================================
+// --mips: the clip's mip chain is box averages, level by level.
+//===========================================================================
+int runMips( const Perturb& perturb )
+{
+	std::printf( "\n=== mips: every texel of the clip's mip chain is the area average of its share of the level below (2 x 2 where the\n"
+	             "    size is even, two and a bit where it is odd), in linear light\n" );
+	for( const Raster& raster : kRasters )
+	{
+		Rig rig;
+		if( !startRig( rig, raster, noiseCard( raster.w, raster.h, 3 ), perturb ) )
+			return 1;
+		if( !rig.Render( 1 ) )
+			return 1;
+		const GLuint live = rig.plugin.LiveTextureForTest();
+		const int levels  = rig.plugin.LiveLevelsForTest();
+		std::vector< Floats > chain;
+		glBindTexture( GL_TEXTURE_2D, live );
+		for( int level = 0; level <= levels; ++level )
+		{
+			const int w = std::max( 1, raster.w >> level ), h = std::max( 1, raster.h >> level );
+			Floats texels( static_cast< size_t >( w ) * h * 4 );
+			glPixelStorei( GL_PACK_ALIGNMENT, 1 );
+			glGetTexImage( GL_TEXTURE_2D, level, GL_RGBA, GL_FLOAT, texels.data() );
+			chain.push_back( texels );
+		}
+		glBindTexture( GL_TEXTURE_2D, 0 );
+		double worst = 0.0;
+		int worstLevel = 0;
+		for( int level = 1; level <= levels; ++level )
+		{
+			const int pw = std::max( 1, raster.w >> ( level - 1 ) ), ph = std::max( 1, raster.h >> ( level - 1 ) );
+			const int w = std::max( 1, raster.w >> level ), h = std::max( 1, raster.h >> level );
+			const double sx = static_cast< double >( pw ) / w, sy = static_cast< double >( ph ) / h;
+			for( int y = 0; y < h; ++y )
+				for( int x = 0; x < w; ++x )
+					for( int ch = 0; ch < 3; ++ch )
+					{
+						// The texel's own share of the level below, by area.
+						double sum = 0.0;
+						for( int ty = static_cast< int >( std::floor( y * sy ) ); ty < std::ceil( ( y + 1 ) * sy ); ++ty )
+							for( int tx = static_cast< int >( std::floor( x * sx ) ); tx < std::ceil( ( x + 1 ) * sx ); ++tx )
+							{
+								const double wx = std::min( ( x + 1 ) * sx, tx + 1.0 ) - std::max( x * sx, static_cast< double >( tx ) );
+								const double wy = std::min( ( y + 1 ) * sy, ty + 1.0 ) - std::max( y * sy, static_cast< double >( ty ) );
+								sum += wx * wy * chain[ level - 1 ][ ( static_cast< size_t >( std::min( ty, ph - 1 ) ) * pw + std::min( tx, pw - 1 ) ) * 4 + ch ];
+							}
+						const double err = std::fabs( chain[ level ][ ( static_cast< size_t >( y ) * w + x ) * 4 + ch ] - sum / ( sx * sy ) );
+						if( err > worst )
+						{
+							worst      = err;
+							worstLevel = level;
+						}
+					}
+		}
+		// One half-float ULP of the average (it is rounded once on the store).
+		Check( worst <= 1.0 / 2048.0, fmt( "%dx%d: %d levels, worst |level - area average of the level below| %.3g (level %d; bound a half-float ULP)",
+		                                   raster.w, raster.h, levels, worst, worstLevel ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --dark: a black clip on clear film is black.
+//===========================================================================
+int runDark( const Perturb& perturb )
+{
+	std::printf( "\n=== dark: a black clip on the Ideal film is exactly black on the card, at every magnification -- no light leaks\n"
+	             "    in from the glass round it (a box coverage written as min - max of card positions cancels in float32 at 75x)\n" );
+	for( const Raster& raster : kRasters )
+	{
+		Rig rig;
+		if( !startRig( rig, raster, flatCard( raster.w, raster.h, 0.0f, 0.0f, 0.0f ), perturb ) )
+			return 1;
+		rig.Set( PT_COLUMNS, 16.0f );
+		rig.Set( PT_ROWS, 1.0f );
+		const reader::Card c = cardOf( rig );
+		for( double M : { 4.0, 24.0, 75.0 } )
+		{
+			// A frame's middle, far enough in that the whole screen is card.
+			aim( rig, c.FrameLeft( 7 ) + 0.5 * c.frameW, c.FrameTop( 0 ) + 0.5 * c.frameH, M );
+			rig.Set( PT_FOCUS, ParamFromDefocus( 0.0 ) );
+			if( !rig.Render( 2 ) )
+				return 1;
+			const Floats out = rig.Output();
+			const hand::State st = rig.plugin.HandForTest().Now();
+			double brightest     = 0.0;
+			int onCard           = 0;
+			for( int y = 0; y < raster.h; y += 2 )
+				for( int x = 0; x < raster.w; x += 2 )
+				{
+					const double fx = st.x + ( x + 0.5 - 0.5 * raster.w ) / ( M * pxPerMm( rig ) );
+					const double fy = st.y + ( y + 0.5 - 0.5 * raster.h ) / ( M * pxPerMm( rig ) );
+					const double margin = 2.0 / ( M * pxPerMm( rig ) );
+					if( fx < margin || fy < margin || fx > c.width - margin || fy > c.height - margin )
+						continue;
+					brightest = std::max( brightest, toLinear( pixelTop( out, raster.w, raster.h, x, y )[ 0 ] ) );
+					++onCard;
+				}
+			Check( onCard > 0 && brightest == 0.0,
+			       fmt( "%dx%d at %.0fx: the brightest of %d card pixels %.3g (bound 0: nothing there to light it)", raster.w, raster.h, M,
+			            onCard, brightest ) );
+		}
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --magnify: the card's edges land where M says, about the screen's centre.
+//===========================================================================
+int runMagnify( const Perturb& perturb )
+{
+	std::printf( "\n=== magnify: every frame edge on the screen is where M x (card mm) x (pixels per screen mm) puts it,\n"
+	             "    measured about the screen's centre at three magnifications\n" );
+	// A box-filtered edge read by area is the edge itself; the bound is
+	// float32 arithmetic on card millimetres (an ULP of 100 mm is 8e-6 mm,
+	// under 1e-3 px at the largest M here).
+	constexpr double kTol = 0.01;
+	for( const Raster& raster : kRasters )
+	{
+		Rig rig;
+		if( !startRig( rig, raster, flatCard( raster.w, raster.h, 1.0f, 1.0f, 1.0f ), perturb ) )
+			return 1;
+		rig.Set( PT_COLUMNS, 4.0f );
+		rig.Set( PT_ROWS, 3.0f );
+		rig.Set( PT_GUTTER, ParamFromGutter( 2.0 ) );
+		const reader::Card c = cardOf( rig );
+		for( double M : { 3.0, 6.0, 11.0 } )
+		{
+			aim( rig, c.FrameLeft( 1 ) + 0.3 * c.frameW, c.FrameTop( 1 ) + 0.5 * c.frameH, M );
+			if( !rig.Render( 2 ) )
+				return 1;
+			const hand::State st = rig.plugin.HandForTest().Now();
+			const double mag     = std::exp2( st.logM );
+			const Floats out     = rig.Output();
+			const int row        = rig.height / 2;
+			auto I = [ & ]( int q ) { return toLinear( pixelTop( out, rig.width, rig.height, q, row )[ 0 ] ); };
+			std::vector< double > edges = { 0.0, c.width };
+			for( int col = 0; col < c.cols; ++col )
+			{
+				edges.push_back( c.FrameLeft( col ) );
+				edges.push_back( c.FrameLeft( col ) + c.frameW );
+			}
+			int expected = 0, found = 0;
+			double worst = 0.0;
+			for( double e : edges )
+			{
+				double i = 0.0, j = 0.0;
+				toScreen( rig, e, 0.0, st.x, st.y, mag, i, j );
+				const int q0 = static_cast< int >( std::floor( i ) ) - 3, q1 = static_cast< int >( std::floor( i ) ) + 4;
+				if( q0 < 0 || q1 >= rig.width )
+					continue;
+				++expected;
+				// A box-filtered step from dark to light covers exactly the
+				// light side of each pixel, so the edge is where the light's
+				// sum across the step says: e = ( q1 + 0.5 ) - sum, rising.
+				const double lo = I( q0 ), hi = I( q1 );
+				if( std::fabs( std::fabs( hi - lo ) - 1.0 ) > 1e-3 )
+					continue;
+				double sum = 0.0;
+				for( int q = q0; q <= q1; ++q )
+					sum += hi > lo ? I( q ) : 1.0 - I( q );
+				const double at = ( q1 + 0.5 ) - sum;
+				const double measured = hi > lo ? at : ( q0 - 0.5 ) + ( q1 - q0 + 1 ) - sum;
+				if( std::getenv( "MFTEST_DEBUG" ) )
+					std::printf( "    edge %.3f mm: expected %.4f px, measured %.4f\n", e, i, measured );
+				++found;
+				worst = std::max( worst, std::fabs( measured - i ) );
+			}
+			Check( expected >= 2 && found == expected && worst <= kTol,
+			       fmt( "%dx%d at %.1fx: %d of %d frame and card edges found, worst %.4f px from M x mm (bound %.2f)", raster.w,
+			            raster.h, mag, found, expected, worst, kTol ) );
+		}
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --defocus: a point of light out of focus is a uniform disc of the radius
+// geometric optics gives, and its light is kept.
+//===========================================================================
+int runDefocus( const Perturb& perturb )
+{
+	std::printf( "\n=== defocus: a point delta mm out of focus images as a disc of radius M^2 |delta| / ( 2 N ( M + 1 ) ) on the screen,\n"
+	             "    measured by its second moment (a uniform disc's is R^2 / 2), across M, N and delta; and its light is kept\n" );
+	struct Case
+	{
+		double M, N, delta;
+	};
+	const Case cases[] = { { 40.0, 2.0, 1.0 }, { 40.0, 2.0, -0.6 }, { 24.0, 2.8, 1.0 }, { 60.0, 2.0, 0.4 }, { 12.0, 2.0, 1.0 } };
+	for( const Raster& raster : kRasters )
+	{
+		const int tx = raster.w / 2, ty = raster.h / 2;
+		Rig rig;
+		if( !startRig( rig, raster, dotCard( raster.w, raster.h, { { tx, ty } } ), perturb ) )
+			return 1;
+		rig.Set( PT_COLUMNS, 16.0f );
+		rig.Set( PT_ROWS, 1.0f );
+		rig.Set( PT_GUTTER, 0.0f );
+		const reader::Card c = cardOf( rig );
+		double dx = 0.0, dy = 0.0;
+		texelOnCard( c, raster.w, raster.h, 7, 0, tx, ty, dx, dy );
+		for( const Case& k : cases )
+		{
+			const double expected = k.M * reader::FilmBlurRadius( k.delta, k.M, k.N ) * pxPerMm( rig );
+			if( expected < 6.0 )
+			{
+				std::printf( "  skip  %dx%d at %.0fx f/%.1f, %+.1f mm: a %.1f px disc is too small to measure to 1%%\n", raster.w,
+				             raster.h, k.M, k.N, k.delta, expected );
+				continue;
+			}
+			aim( rig, dx, dy, k.M );
+			rig.Set( PT_APERTURE, ParamFromAperture( k.N ) );
+			rig.plugin.SetPrefilterForTest( false );
+			double si = 0.0, sj = 0.0;
+			rig.Set( PT_FOCUS, ParamFromDefocus( 0.0 ) );
+			if( !rig.Render( 2 ) )
+				return 1;
+			const hand::State st = rig.plugin.HandForTest().Now();
+			toScreen( rig, dx, dy, st.x, st.y, std::exp2( st.logM ), si, sj );
+			const double half = expected + 12.0;
+			const Moments sharp = momentsOf( rig.Output(), rig.width, rig.height, si, sj, half );
+			rig.Set( PT_FOCUS, ParamFromDefocus( k.delta ) );
+			if( !rig.Render( 1 ) )
+				return 1;
+			const Moments blur = momentsOf( rig.Output(), rig.width, rig.height, si, sj, half );
+			const double shift = ( blur.cx - sharp.cx ) * ( blur.cx - sharp.cx ) + ( blur.cy - sharp.cy ) * ( blur.cy - sharp.cy );
+			const double measured = std::sqrt( std::max( 0.0, 2.0 * ( blur.m2 - sharp.m2 + shift ) ) );
+			// 1%: the second moment of the Vogel taps is exactly R^2 / 2 and
+			// the dot's own spread is subtracted, so what is left is how a
+			// sampled dot's moment moves with sub-pixel position (< 0.25 px^2,
+			// under 1% of R^2 / 2 for R >= 6 px).
+			Check( std::fabs( measured / expected - 1.0 ) <= 0.01,
+			       fmt( "%dx%d at %.0fx f/%.1f, %+.1f mm out: radius %.2f px, geometric optics %.2f px (%+.2f%%; bound 1%%)", raster.w,
+			            raster.h, k.M, k.N, k.delta, measured, expected, 100.0 * ( measured / expected - 1.0 ) ) );
+			// The light: with the prefilter on, as shipped.
+			rig.plugin.SetPrefilterForTest( true );
+			if( !rig.Render( 1 ) )
+				return 1;
+			const Moments kept = momentsOf( rig.Output(), rig.width, rig.height, si, sj, half );
+			// The point is one texel of linear light 1: its light on the
+			// screen is the texel's area there, in px^2. (Not the sharp
+			// picture's sum, which a sub-pixel dot sampled at one offset
+			// misses by a few percent.)
+			const double texel = c.frameW / raster.w * k.M * pxPerMm( rig );
+			Check( std::fabs( kept.total / ( texel * texel ) - 1.0 ) <= 0.005,
+			       fmt( "%dx%d at %.0fx f/%.1f, %+.1f mm out, prefiltered as shipped: the disc carries %.4f of the point's light (bound "
+			            "0.5%%: box mips keep the mean, bilinear sampling and the taps average it)",
+			            raster.w, raster.h, k.M, k.N, k.delta, kept.total / ( texel * texel ) ) );
+		}
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --field: the card's bow, measured out of the picture.
+//===========================================================================
+int runField( const Perturb& perturb )
+{
+	std::printf( "\n=== field: a grid of points on a bowed card: each comes sharpest at the knob setting that puts the focus at its\n"
+	             "    height, bow( p ) - bow( centre ), read from the vertex of its blur against the knob\n" );
+	for( const Raster& raster : kRasters )
+	{
+		const int step = std::max( 4, raster.w / 40 );
+		std::vector< std::pair< int, int > > dots;
+		for( int y = step / 2; y < raster.h; y += step )
+			for( int x = step / 2; x < raster.w; x += step )
+				dots.push_back( { x, y } );
+		// A seed whose bow varies across the view by 0.15 mm or more, or the
+		// check has nothing to tell a flipped bow from.
+		const double M = 12.0;
+		int seed       = 1;
+		{
+			const reader::Card c = reader::MakeCard( 1, 1, 0.0, static_cast< double >( raster.w ) / raster.h );
+			for( int candidate = 1; candidate < 200; ++candidate )
+			{
+				reader::Bow bow;
+				bow.Build( c, FlatnessFromParam( ParamFromFlatness( 0.5 ) ), static_cast< uint32_t >( candidate ) );
+				const double cx = c.FrameLeft( 0 ) + 0.5 * c.frameW, cy = c.FrameTop( 0 ) + 0.5 * c.frameH;
+				const double hw = 0.4 * reader::kScreenWidth / M, hh = 0.4 * reader::kScreenWidth * raster.h / raster.w / M;
+				double spread = 0.0;
+				for( double sx : { -hw, hw } )
+					for( double sy : { -hh, hh } )
+						spread = std::max( spread, std::fabs( bow.At( cx + sx, cy + sy ) - bow.At( cx, cy ) ) );
+				if( spread >= 0.12 )
+				{
+					seed = candidate;
+					break;
+				}
+			}
+		}
+		Rig rig;
+		if( !startRig( rig, raster, dotCard( raster.w, raster.h, dots ), perturb ) )
+			return 1;
+		rig.Set( PT_SEED, static_cast< float >( seed ) );
+		rig.Set( PT_COLUMNS, 1.0f );
+		rig.Set( PT_ROWS, 1.0f );
+		rig.Set( PT_FLATNESS, ParamFromFlatness( 0.5 ) );
+		rig.Set( PT_APERTURE, ParamFromAperture( 2.0 ) );
+		rig.plugin.SetPrefilterForTest( false );
+		const reader::Card c = cardOf( rig );
+		aim( rig, c.FrameLeft( 0 ) + 0.5 * c.frameW, c.FrameTop( 0 ) + 0.5 * c.frameH, M );
+		std::vector< double > knobs;
+		for( int k = -5; k <= 5; ++k )
+			knobs.push_back( 0.2 * k );
+		std::vector< std::vector< double > > m2( dots.size() );
+		hand::State st;
+		for( double knob : knobs )
+		{
+			rig.Set( PT_FOCUS, ParamFromDefocus( knob ) );
+			if( !rig.Render( 2 ) )
+				return 1;
+			st              = rig.plugin.HandForTest().Now();
+			const Floats out = rig.Output();
+			for( size_t d = 0; d < dots.size(); ++d )
+			{
+				double x = 0.0, y = 0.0, i = 0.0, j = 0.0;
+				texelOnCard( c, raster.w, raster.h, 0, 0, dots[ d ].first, dots[ d ].second, x, y );
+				toScreen( rig, x, y, st.x, st.y, std::exp2( st.logM ), i, j );
+				const double half = 0.45 * step * M / ( reader::kScreenWidth / c.frameW );
+				if( i < half || j < half || i > rig.width - 1 - half || j > rig.height - 1 - half )
+					continue;
+				m2[ d ].push_back( momentsOf( out, rig.width, rig.height, i, j, half ).m2 );
+			}
+		}
+		// The bound: the GPU reads the bow from a 1 mm grid, bilinearly
+		// (under 0.002 mm off the B-spline on a 25 mm lattice), and the
+		// vertex of a fitted parabola moves with how a sampled dot's moment
+		// changes with sub-pixel position (~0.05 px^2) against the blur's
+		// slope, ( M R / delta )^2 / 2 px^2 per mm^2 -- 4 at 320 px, 70 at
+		// 1280: 0.03 and 0.005 mm with room.
+		const double bound = raster.w >= 1280 ? 0.005 : 0.03;
+		const reader::Bow& bow = rig.plugin.BowForTest();
+		int measured = 0, steep = 0;
+		double worst = 0.0;
+		for( size_t d = 0; d < dots.size(); ++d )
+		{
+			if( m2[ d ].size() != knobs.size() )
+				continue;
+			// Least squares m2 = a k^2 + b k + c, vertex -b / 2a.
+			double S[ 5 ] = {}, T[ 3 ] = {};
+			for( size_t k = 0; k < knobs.size(); ++k )
+			{
+				double p = 1.0;
+				for( int e = 0; e < 5; ++e, p *= knobs[ k ] )
+					S[ e ] += p;
+				T[ 0 ] += m2[ d ][ k ];
+				T[ 1 ] += m2[ d ][ k ] * knobs[ k ];
+				T[ 2 ] += m2[ d ][ k ] * knobs[ k ] * knobs[ k ];
+			}
+			const double A[ 3 ][ 3 ] = { { S[ 4 ], S[ 3 ], S[ 2 ] }, { S[ 3 ], S[ 2 ], S[ 1 ] }, { S[ 2 ], S[ 1 ], S[ 0 ] } };
+			const double y3[ 3 ]     = { T[ 2 ], T[ 1 ], T[ 0 ] };
+			auto det = []( const double m[ 3 ][ 3 ] ) {
+				return m[ 0 ][ 0 ] * ( m[ 1 ][ 1 ] * m[ 2 ][ 2 ] - m[ 1 ][ 2 ] * m[ 2 ][ 1 ] ) - m[ 0 ][ 1 ] * ( m[ 1 ][ 0 ] * m[ 2 ][ 2 ] - m[ 1 ][ 2 ] * m[ 2 ][ 0 ] )
+				     + m[ 0 ][ 2 ] * ( m[ 1 ][ 0 ] * m[ 2 ][ 1 ] - m[ 1 ][ 1 ] * m[ 2 ][ 0 ] );
+			};
+			double coef[ 3 ];
+			for( int col = 0; col < 3; ++col )
+			{
+				double B[ 3 ][ 3 ];
+				for( int r = 0; r < 3; ++r )
+					for( int q = 0; q < 3; ++q )
+						B[ r ][ q ] = q == col ? y3[ r ] : A[ r ][ q ];
+				coef[ col ] = det( B ) / det( A );
+			}
+			const double vertex = -coef[ 1 ] / ( 2.0 * coef[ 0 ] );
+			double x = 0.0, y = 0.0;
+			texelOnCard( c, raster.w, raster.h, 0, 0, dots[ d ].first, dots[ d ].second, x, y );
+			const double expected = bow.At( x, y ) - bow.At( st.x, st.y );
+			worst                 = std::max( worst, std::fabs( vertex - expected ) );
+			steep += std::fabs( expected ) >= 2.0 * bound;
+			++measured;
+		}
+		Check( measured >= 8 && steep >= 2 && worst <= bound,
+		       fmt( "%dx%d at %.0fx f/2 on a 0.5 mm bow (seed %d): %d points measured, %d of them twice the bound or more off the "
+		            "centre's height (so a flipped bow is caught); worst |vertex - bow difference| %.4f mm (bound %.3f)",
+		            raster.w, raster.h, M, seed, measured, steep, worst, bound ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --track: the picture is where the hand says the carriage is.
+//===========================================================================
+int runTrack( const Perturb& perturb )
+{
+	std::printf( "\n=== track: through pans, corrections and crash zooms, the screen's centre (read off a coordinate clip) is the\n"
+	             "    card point the hand model has the CARRIAGE at -- not the hand, which the grip lags\n" );
+	for( const Raster& raster : kRasters )
+	{
+		Rig rig;
+		if( !startRig( rig, raster, coordinateCard( raster.w, raster.h ), perturb ) )
+			return 1;
+		rig.Set( PT_OPERATOR, static_cast< float >( Operator::Auto ) );
+		rig.Set( PT_BROWSE, static_cast< float >( Browse::Searching ) );
+		rig.Set( PT_CRASH_ZOOM, 1.0f );
+		rig.Set( PT_DWELL, ParamFromDwell( 0.3 ) );
+		rig.Set( PT_CARRIAGE_PLAY, 0.6f );
+		rig.Set( PT_COLUMNS, 6.0f );
+		rig.Set( PT_ROWS, 4.0f );
+		rig.plugin.SetHandLoggingForTest( true );
+		const reader::Card c = cardOf( rig );
+		int checked = 0;
+		double worst = 0.0, fastest = 0.0, gripLag = 0.0, slack = 1e9, worstBound = 0.0;
+		double lastX = 0.0, lastY = 0.0;
+		for( int f = 0; f < 600; ++f )
+		{
+			if( !rig.Render( 1 ) )
+				return 1;
+			const hand::Hand& h  = rig.plugin.HandForTest();
+			const hand::State st = h.Now();
+			const double M       = std::exp2( st.logM );
+			if( f > 0 )
+				fastest = std::max( fastest, std::hypot( st.x - lastX, st.y - lastY ) * 60.0 );
+			lastX = st.x;
+			lastY = st.y;
+			gripLag = std::max( gripLag, std::hypot( h.HandX() - st.x, h.HandY() - st.y ) );
+			double u = 0.0, v = 0.0;
+			if( !frameAt( c, st.x, st.y, 3.0 / ( M * pxPerMm( rig ) ), u, v ) )
+				continue;
+			double ru = 0.0, rv = 0.0;
+			centreReading( rig, rig.Output(), ru, rv );
+			const double err = std::max( std::fabs( ru - u ) * c.frameW, std::fabs( rv - v ) * c.frameH );
+			const double texelsPerPixel = raster.w / ( c.frameW * M * pxPerMm( rig ) );
+			const double bound          = coordinateBound( std::max( c.frameW, c.frameH ), texelsPerPixel );
+			if( err > worst && std::getenv( "MFTEST_DEBUG" ) )
+				std::printf( "    frame %d: M %.2f u %.5f read %.5f, v %.5f read %.5f (bound %.4f)\n", f, M, u, ru, v, rv, bound );
+			worst = std::max( worst, err );
+			if( bound - err < slack )
+			{
+				slack      = bound - err;
+				worstBound = bound;
+				if( std::getenv( "MFTEST_DEBUG" ) )
+					std::printf( "    tightest so far, frame %d: M %.2f texels/px %.3f u %.6f read %.6f (%.4f mm), v %.6f read %.6f (%.4f mm)\n", f, M,
+					             texelsPerPixel, u, ru, ( ru - u ) * c.frameW, v, rv, ( rv - v ) * c.frameH );
+			}
+			++checked;
+		}
+		int pans = 0, corrections = 0, zooms = 0;
+		for( const hand::Segment& g : rig.plugin.HandForTest().Log() )
+		{
+			pans += g.tag == hand::Tag::Primary;
+			corrections += g.tag == hand::Tag::Correction;
+			zooms += g.tag == hand::Tag::ZoomOut;
+		}
+		Check( checked >= 300 && pans >= 3 && corrections >= 1 && zooms >= 1 && slack >= 0.0,
+		       fmt( "%dx%d, 600 frames (%d pans, %d corrections, %d crash zooms; carriage up to %.0f mm/s, grip lag up to %.2f mm): "
+		            "%d frames read, worst |picture - carriage| %.4f mm; nearest its bound by %.4f (of %.4f mm: a half-float ULP per store "
+		            "and one for the filter, 2 + ceil( LOD ) of them)",
+		            raster.w, raster.h, pans, corrections, zooms, fastest, gripLag, checked, worst, slack, worstBound ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --carriage: a hand step through the grip is the second-order step
+// response, against an independent integration.
+//===========================================================================
+int runCarriage( const Perturb& perturb )
+{
+	std::printf( "\n=== carriage: the card on a compliant grip, x'' = w^2 ( hand - x ) - 2 zeta w x', after a step of the hand:\n"
+	             "    the model against an independent RK4 integration, its overshoot against exp( -pi zeta / sqrt( 1 - zeta^2 ) ),\n"
+	             "    and the picture against both\n" );
+	for( const Raster& raster : kRasters )
+	{
+		Rig rig;
+		if( !startRig( rig, raster, coordinateCard( raster.w, raster.h ), perturb ) )
+			return 1;
+		rig.Set( PT_COLUMNS, 6.0f );
+		rig.Set( PT_ROWS, 4.0f );
+		rig.Set( PT_CARRIAGE_PLAY, 1.0f );
+		const reader::Card c = cardOf( rig );
+		const double M       = 6.0;
+		const int stepFrame  = 10;
+		aim( rig, 0.30 * c.width, c.FrameTop( 1 ) + 0.5 * c.frameH, M );
+		std::vector< double > model, picture, when;
+		double x0 = 0.0, x1 = 0.0;
+		for( int f = 0; f <= stepFrame + 90; ++f )
+		{
+			if( f == stepFrame )
+			{
+				x0 = rig.plugin.SettingsForTest().manualX;
+				rig.Set( PT_POSITION_X, 0.36f );
+			}
+			if( !rig.Render( 1 ) )
+				return 1;
+			if( f == stepFrame )
+				x1 = rig.plugin.SettingsForTest().manualX;
+			const hand::State st = rig.plugin.HandForTest().Now();
+			model.push_back( st.x );
+			when.push_back( rig.plugin.HandForTest().Time() );
+			double u = 0.0, v = 0.0, ru = 0.0, rv = 0.0;
+			const int col = static_cast< int >( std::floor( ( st.x - c.gridX + 0.5 * c.gutter ) / c.PitchX() ) );
+			if( frameAt( c, st.x, st.y, 3.0 / ( M * pxPerMm( rig ) ), u, v ) )
+			{
+				centreReading( rig, rig.Output(), ru, rv );
+				picture.push_back( c.FrameLeft( col ) + ru * c.frameW );
+			}
+			else
+				picture.push_back( NAN );
+		}
+		// The reference: RK4 at 10 us, the hand still until the step frame
+		// begins and linear across it, as the host's slider is.
+		const double w = 2.0 * 3.14159265358979323846 * CarriageHertzFromParam( 1.0f ), zeta = CarriageZetaFromParam( 1.0f );
+		const double tA = ( stepFrame - 1 ) / 60.0, tB = stepFrame / 60.0;
+		auto handAt = [ & ]( double t ) { return t <= tA ? x0 : t >= tB ? x1 : x0 + ( x1 - x0 ) * ( t - tA ) / ( tB - tA ); };
+		double x = x0, vx = 0.0, t = 0.0, worstModel = 0.0, worstPicture = 0.0, peak = 0.0;
+		const double hstepMax = 1e-5;
+		size_t k = 0;
+		int read = 0;
+		while( k < when.size() )
+		{
+			if( t >= when[ k ] )
+			{
+				worstModel = std::max( worstModel, std::fabs( model[ k ] - x ) );
+				if( !std::isnan( picture[ k ] ) )
+				{
+					worstPicture = std::max( worstPicture, std::fabs( picture[ k ] - x ) );
+					++read;
+				}
+				++k;
+				continue;
+			}
+			// Step exactly onto the frame's time, and onto the ramp's ends.
+			double hstep = std::min( hstepMax, when[ k ] - t );
+			for( double edge : { tA, tB } )
+				if( t < edge && t + hstep > edge )
+					hstep = edge - t;
+			auto acc = [ & ]( double tt, double xx, double vv ) { return w * w * ( handAt( tt ) - xx ) - 2.0 * zeta * w * vv; };
+			const double k1x = vx, k1v = acc( t, x, vx );
+			const double k2x = vx + 0.5 * hstep * k1v, k2v = acc( t + 0.5 * hstep, x + 0.5 * hstep * k1x, vx + 0.5 * hstep * k1v );
+			const double k3x = vx + 0.5 * hstep * k2v, k3v = acc( t + 0.5 * hstep, x + 0.5 * hstep * k2x, vx + 0.5 * hstep * k2v );
+			const double k4x = vx + hstep * k3v, k4v = acc( t + hstep, x + hstep * k3x, vx + hstep * k3v );
+			x += hstep / 6.0 * ( k1x + 2.0 * k2x + 2.0 * k3x + k4x );
+			vx += hstep / 6.0 * ( k1v + 2.0 * k2v + 2.0 * k3v + k4v );
+			t += hstep;
+			if( t > tB )
+				peak = std::max( peak, ( x - x1 ) / ( x1 - x0 ) );
+		}
+		// The textbook overshoot is for an instant step; a step spread over
+		// one frame overshoots by sinc( w_d T / 2 ) of it (here 0.998).
+		const double wd       = w * std::sqrt( 1.0 - zeta * zeta );
+		const double textbook = std::exp( -3.14159265358979323846 * zeta / std::sqrt( 1.0 - zeta * zeta ) );
+		const double spread   = std::sin( 0.5 * wd / 60.0 ) / ( 0.5 * wd / 60.0 );
+		Check( worstModel <= 1e-6,
+		       fmt( "%dx%d: a %.2f mm step at %.0f Hz, zeta %.2f: the model's carriage within %.2g mm of RK4 over 1.5 s (bound 1e-6)", raster.w,
+		            raster.h, x1 - x0, w / ( 2.0 * 3.14159265358979323846 ), zeta, worstModel ) );
+		Check( std::fabs( peak - textbook * spread ) <= 0.002,
+		       fmt( "%dx%d: overshoot %.4f of the step; exp( -pi zeta / sqrt( 1 - zeta^2 ) ) x sinc %.4f (bound 0.002: the "
+		            "reference's sampling of its peak)",
+		            raster.w, raster.h, peak, textbook * spread ) );
+		const double bound = coordinateBound( c.frameW, raster.w / ( c.frameW * M * pxPerMm( rig ) ) );
+		Check( read >= 60 && worstPicture <= bound,
+		       fmt( "%dx%d: %d frames read off the picture, worst |picture - RK4| %.4f mm (bound %.4f)", raster.w, raster.h, read,
+		            worstPicture, bound ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --shutter: a carriage at constant speed smears an edge over the exposure.
+//===========================================================================
+int runShutter( const Perturb& perturb )
+{
+	std::printf( "\n=== shutter: a carriage at constant speed smears an edge over Shutter x the frame's travel: the smear's centroid\n"
+	             "    lags the edge by half of it and its spread is that of a uniform smear of that length\n" );
+	for( const Raster& raster : kRasters )
+	{
+		Floats card = flatCard( raster.w, raster.h, 0.0f, 0.0f, 0.0f );
+		for( int y = 0; y < raster.h; ++y )
+			for( int x = raster.w / 2; x < raster.w; ++x )
+				for( int ch = 0; ch < 3; ++ch )
+					card[ ( static_cast< size_t >( y ) * raster.w + x ) * 4 + ch ] = 1.0f;
+		for( double shutter : { 0.5, 1.0 } )
+		{
+			Rig rig;
+			if( !startRig( rig, raster, card, perturb ) )
+				return 1;
+			rig.Set( PT_COLUMNS, 1.0f );
+			rig.Set( PT_ROWS, 1.0f );
+			rig.plugin.SetPrefilterForTest( false );
+			const reader::Card c = cardOf( rig );
+			const double M       = reader::kScreenWidth / c.frameW;
+			const double edgeX   = c.FrameLeft( 0 ) + 0.5 * c.frameW;
+			const double stepMm  = 48.0 * raster.w / 1280.0 / ( M * pxPerMm( rig ) );// 48 px a frame at 720p
+			const double y       = c.FrameTop( 0 ) + 0.5 * c.frameH;
+			// The static edge, to subtract its own spread.
+			rig.Set( PT_SHUTTER, 0.0f );
+			aim( rig, edgeX - 2.0 * stepMm, y, M );
+			if( !rig.Render( 2 ) )
+				return 1;
+			// The step's line-spread, local to it: the static edge sits 2 S
+			// right of the centre, the moving one ends S left of it (the image
+			// moves against the carriage), S the travel a frame. The glass
+			// beyond the card is far off.
+			const double S = 48.0 * raster.w / 1280.0;
+			const int i0   = std::max( 0, static_cast< int >( 0.5 * rig.width - S ) - 30 );
+			const int i1   = std::min( rig.width - 1, static_cast< int >( 0.5 * rig.width + 2.0 * S ) + 30 );
+			auto lsf = [ & ]( const Floats& out, double& mean, double& var ) {
+				double s0 = 0.0, s1 = 0.0, s2 = 0.0;
+				const int row = rig.height / 2;
+				for( int i = i0; i < i1; ++i )
+				{
+					const double d = toLinear( pixelTop( out, rig.width, rig.height, i + 1, row )[ 0 ] )
+					               - toLinear( pixelTop( out, rig.width, rig.height, i, row )[ 0 ] );
+					s0 += d;
+					s1 += d * ( i + 0.5 );
+					s2 += d * ( i + 0.5 ) * ( i + 0.5 );
+				}
+				mean = s1 / s0;
+				var  = s2 / s0 - mean * mean;
+			};
+			double mean0 = 0.0, var0 = 0.0;
+			lsf( rig.Output(), mean0, var0 );
+			const double carriage0 = rig.plugin.HandForTest().Now().x;
+			// Now moving: stepMm a frame, Shutter open.
+			rig.Set( PT_SHUTTER, static_cast< float >( shutter ) );
+			const double xStart = edgeX - 2.0 * stepMm;
+			for( int f = 1; f <= 3; ++f )
+			{
+				rig.Set( PT_POSITION_X, static_cast< float >( ( xStart + f * stepMm ) / c.width ) );
+				if( !rig.Render( 1 ) )
+					return 1;
+			}
+			double mean = 0.0, var = 0.0;
+			lsf( rig.Output(), mean, var );
+			const hand::Hand& h  = rig.plugin.HandForTest();
+			const double window  = shutter / 60.0;
+			const double mid     = h.At( h.Time() - 0.5 * window ).x;
+			const double travel  = ( h.Now().x - h.At( h.Time() - window ).x ) * M * pxPerMm( rig );
+			const double lagged  = mean0 - ( mid - carriage0 ) * M * pxPerMm( rig );
+			const double spread2 = 12.0 * ( var - var0 );
+			// The centroid of n evenly spaced moments of a uniform motion is
+			// its middle, exactly. Their spread squared is L^2 ( 1 - 1/n^2 ),
+			// n a power of two and at least 4 here (L > 4.5 px); and a sampled
+			// edge's own variance depends on its sub-pixel phase, phi ( 1 -
+			// phi ), so the static edge subtracted can be off by up to 1/4 px^2:
+			// 3 px^2 of L^2.
+			Check( std::fabs( mean - lagged ) <= 0.01,
+			       fmt( "%dx%d, Shutter %.1f: the smear's centroid at %.3f px, the carriage at mid-exposure puts it at %.3f (bound 0.01 px)",
+			            raster.w, raster.h, shutter, mean, lagged ) );
+			Check( spread2 >= 0.9375 * travel * travel - 3.0 && spread2 <= travel * travel + 3.0,
+			       fmt( "%dx%d, Shutter %.1f: smear %.2f px across, the exposure's travel %.2f px (bound on its square: 0.9375 L^2 - 3 to "
+			            "L^2 + 3 px^2)",
+			            raster.w, raster.h, shutter, std::sqrt( std::max( 0.0, spread2 ) ), travel ) );
+		}
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --hunt: the hunt, as the hand plans it and as the picture shows it.
+//===========================================================================
+int runHunt( const Perturb& perturb )
+{
+	std::printf( "\n=== hunt: past focus, back, past again by less: each reversal delta_a + v tau beyond focus, each pass g times the\n"
+	             "    last's speed, the stop inside the depth of focus -- and the picture's blur, frame by frame, the knob's\n" );
+	for( const Raster& raster : kRasters )
+	{
+		const int tx = raster.w / 2, ty = raster.h / 2;
+		// A seed whose first hunt turns at least twice at this setting.
+		int seed = -1;
+		for( int candidate = 1; candidate < 60 && seed < 0; ++candidate )
+		{
+			hand::Settings s;
+			s.dwell    = 10.0;
+			s.browse   = Browse::Reading;
+			s.readZoom = 60.0;
+			s.aperture = 2.0;
+			s.parfocal = 0.0;
+			s.rigid    = true;
+			s.skill    = 0.35;
+			s.seed     = static_cast< uint32_t >( candidate );
+			s.screenH  = reader::kScreenWidth * raster.h / raster.w;
+			const reader::Card c = reader::MakeCard( 16, 1, 0.0, static_cast< double >( raster.w ) / raster.h );
+			reader::Bow bow;
+			bow.Build( c, 0.5, s.seed );
+			hand::Hand h;
+			h.SetLogging( true );
+			h.Advance( 0.0, s, c, bow, false, false );
+			if( !h.Hunts().empty() && h.Hunts().front().turns.size() >= 2 )
+				seed = candidate;
+		}
+		Rig rig;
+		if( !startRig( rig, raster, dotCard( raster.w, raster.h, { { tx, ty } } ), perturb ) )
+			return 1;
+		rig.Set( PT_OPERATOR, static_cast< float >( Operator::Auto ) );
+		rig.Set( PT_BROWSE, static_cast< float >( Browse::Reading ) );
+		rig.Set( PT_DWELL, 1.0f );
+		rig.Set( PT_ZOOM, ParamFromZoom( 60.0 ) );
+		rig.Set( PT_APERTURE, ParamFromAperture( 2.0 ) );
+		rig.Set( PT_FLATNESS, ParamFromFlatness( 0.5 ) );
+		rig.Set( PT_FOCUS_SKILL, 0.35f );
+		rig.Set( PT_COLUMNS, 16.0f );
+		rig.Set( PT_ROWS, 1.0f );
+		rig.Set( PT_GUTTER, 0.0f );
+		rig.Set( PT_SEED, static_cast< float >( std::max( seed, 1 ) ) );
+		rig.plugin.SetPrefilterForTest( false );
+		rig.plugin.SetHandLoggingForTest( true );
+		const reader::Card c = cardOf( rig );
+		double dx = 0.0, dy = 0.0;
+		texelOnCard( c, raster.w, raster.h, 0, 0, tx, ty, dx, dy );
+
+		// The dot in focus, for its own spread.
+		double sharpM2 = 0.0;
+		{
+			Rig flat;
+			if( !startRig( flat, raster, dotCard( raster.w, raster.h, { { tx, ty } } ), perturb ) )
+				return 1;
+			flat.Set( PT_COLUMNS, 16.0f );
+			flat.Set( PT_ROWS, 1.0f );
+			flat.Set( PT_GUTTER, 0.0f );
+			flat.plugin.SetPrefilterForTest( false );
+			aim( flat, dx, dy, 60.0 );
+			if( !flat.Render( 2 ) )
+				return 1;
+			const hand::State st = flat.plugin.HandForTest().Now();
+			double i = 0.0, j = 0.0;
+			toScreen( flat, dx, dy, st.x, st.y, std::exp2( st.logM ), i, j );
+			sharpM2 = momentsOf( flat.Output(), flat.width, flat.height, i, j, 10.0 ).m2;
+		}
+
+		double worst = 0.0, largest = 0.0;
+		int compared = 0, crossings = 0, sharpestAtCrossing = 0;
+		double lastDelta = 0.0, lastR = 0.0, beforeR = 1e9;
+		for( int f = 0; f < 150; ++f )
+		{
+			if( !rig.Render( 1 ) )
+				return 1;
+			const hand::State st = rig.plugin.HandForTest().Now();
+			const double M       = std::exp2( st.logM );
+			const double delta   = st.z - rig.plugin.BowForTest().At( dx, dy );
+			const double model   = M * reader::FilmBlurRadius( delta, M, 2.0 ) * pxPerMm( rig );
+			double i = 0.0, j = 0.0;
+			toScreen( rig, dx, dy, st.x, st.y, M, i, j );
+			const Moments m = momentsOf( rig.Output(), rig.width, rig.height, i, j, model + 12.0 );
+			// The Vogel centroid's own offset is part of the disc's moment
+			// about the point's position: read it off the picture.
+			const double shift = ( m.cx - i ) * ( m.cx - i ) + ( m.cy - j ) * ( m.cy - j );
+			const double R     = std::sqrt( std::max( 0.0, 2.0 * ( m.m2 - sharpM2 + shift ) ) );
+			if( model >= 6.0 )
+			{
+				worst = std::max( worst, std::fabs( R / model - 1.0 ) );
+				++compared;
+			}
+			largest = std::max( largest, model );
+			// Through focus: of the frames either side, the sharper picture is
+			// the one the model has nearer focus, wherever a picture can tell
+			// them apart (the blurrier at least 3 px, and half as far out
+			// again as the other).
+			const double nearer  = std::min( std::fabs( delta ), std::fabs( lastDelta ) );
+			const double further = std::max( std::fabs( delta ), std::fabs( lastDelta ) );
+			const double furtherPx = M * reader::FilmBlurRadius( further, M, 2.0 ) * pxPerMm( rig );
+			if( f > 0 && delta * lastDelta < 0.0 && further >= 1.5 * nearer && furtherPx >= 3.0 )
+			{
+				++crossings;
+				const bool nearerNow = std::fabs( delta ) < std::fabs( lastDelta );
+				sharpestAtCrossing += nearerNow == ( R < lastR );
+			}
+			beforeR   = lastR;
+			lastDelta = delta;
+			lastR     = R;
+		}
+		(void)beforeR;
+		const auto& hunts = rig.plugin.HandForTest().Hunts();
+		Check( !hunts.empty() && hunts.front().turns.size() >= 2,
+		       fmt( "%dx%d, seed %d: the first hunt starts %.3f mm out and turns %zu times", raster.w, raster.h, seed,
+		            hunts.empty() ? 0.0 : hunts.front().start, hunts.empty() ? size_t( 0 ) : hunts.front().turns.size() ) );
+		if( hunts.empty() )
+			continue;
+		const hand::Hunt& hu = hunts.front();
+		double worstTurn = 0.0, worstGain = 0.0;
+		size_t pass       = hu.wrongWay ? 1 : 0;
+		for( size_t k = hu.wrongWay ? 1 : 0; k < hu.turns.size(); ++k, ++pass )
+			worstTurn = std::max( worstTurn, std::fabs( std::fabs( hu.turns[ k ] ) - ( hu.band + hu.speeds[ pass ] * hu.reaction ) ) );
+		for( size_t k = ( hu.wrongWay ? 2 : 1 ); k < hu.speeds.size(); ++k )
+			worstGain = std::max( worstGain, std::fabs( hu.speeds[ k ] / hu.speeds[ k - 1 ] - hu.gain ) );
+		const bool lastSlow = hu.speeds.back() * hu.reaction <= 2.0 * hu.band;
+		Check( worstTurn <= 1e-12 && worstGain <= 1e-12 && std::fabs( hu.end ) <= hu.band && lastSlow,
+		       fmt( "%dx%d: reversals at delta_a + v tau to %.1g mm (delta_a %.4f mm, tau %.3f s), each pass %.3f of the last's speed to "
+		            "%.1g, stopped %.4f mm out, inside delta_a, on the first pass slow enough (v tau <= 2 delta_a)",
+		            raster.w, raster.h, worstTurn, hu.band, hu.reaction, hu.gain, worstGain, hu.end ) );
+		// 2%: the defocus check's 1% on the disc, plus the GPU's bow, read
+		// bilinearly off a 1 mm grid (0.002 mm, 1% of the smallest defocus
+		// compared here).
+		// At 320 px no pass through focus is blurred 3 px either side, so
+		// the order is only required where a picture can show it.
+		const bool judgeable = raster.w >= 1280;
+		Check( compared >= 10 && worst <= 0.02 && ( crossings >= 1 || !judgeable ) && sharpestAtCrossing == crossings,
+		       fmt( "%dx%d: the picture's blur against the knob's, %d frames with 6 px or more (largest %.1f px): worst %.2f%% (bound 2%%); "
+		            "%d passes through focus a picture can judge, the sharper frame the nearer one in %d",
+		            raster.w, raster.h, compared, largest, 100.0 * worst, crossings, sharpestAtCrossing ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --stock: what each film transmits.
+//===========================================================================
+int runStock( const Perturb& perturb )
+{
+	std::printf( "\n=== stock: every film is a unit-gamma print, T = dense + ( base - dense ) f, f the exposure (1 - exposure on a\n"
+	             "    negative, Rec.709 luminance on a mono stock); the gutters are unexposed and off the card there is only glass\n" );
+	// The bound: the exposure is held in RGBA16F linear light (2^-11 of it,
+	// doubled for truncation) and scaled by base - dense <= 1; the output's
+	// float sRGB round trip adds ~1e-6.
+	constexpr double kTol = 2.0 / 2048.0 + 1e-5;
+	for( const Raster& raster : kRasters )
+	{
+		Floats card( static_cast< size_t >( raster.w ) * raster.h * 4 );
+		for( int y = 0; y < raster.h; ++y )
+			for( int x = 0; x < raster.w; ++x )
+			{
+				const double u = ( x + 0.5 ) / raster.w;
+				float* o       = &card[ ( static_cast< size_t >( y ) * raster.w + x ) * 4 ];
+				o[ 0 ]         = static_cast< float >( u );
+				o[ 1 ]         = static_cast< float >( 1.0 - u );
+				o[ 2 ]         = 0.5f;
+				o[ 3 ]         = 1.0f;
+			}
+		Rig rig;
+		if( !startRig( rig, raster, card, perturb ) )
+			return 1;
+		for( int film = 0; film < static_cast< int >( Film::Count ); ++film )
+		{
+			const reader::Stock& stock = reader::StockOf( static_cast< Film >( film ) );
+			rig.Set( PT_FILM, static_cast< float >( film ) );
+			rig.Set( PT_COLUMNS, 1.0f );
+			rig.Set( PT_ROWS, 1.0f );
+			reader::Card c = cardOf( rig );
+			aim( rig, c.gridX + 0.5 * c.frameW, c.gridY + 0.5 * c.frameH, reader::kScreenWidth / c.frameW );
+			if( !rig.Render( 2 ) )
+				return 1;
+			const Floats out = rig.Output();
+			double worst     = 0.0;
+			for( int x = 0; x < raster.w; x += 3 )
+			{
+				const float* src = &card[ ( static_cast< size_t >( raster.h / 2 ) * raster.w + x ) * 4 ];
+				double e[ 3 ];
+				for( int ch = 0; ch < 3; ++ch )
+					e[ ch ] = reader::ToLinear( src[ ch ] );
+				const double Y = 0.2126 * e[ 0 ] + 0.7152 * e[ 1 ] + 0.0722 * e[ 2 ];
+				const float* got = pixelTop( out, raster.w, raster.h, x, raster.h - 1 - raster.h / 2 );
+				for( int ch = 0; ch < 3; ++ch )
+				{
+					double f = stock.colour ? e[ ch ] : Y;
+					if( stock.negative )
+						f = 1.0 - f;
+					const double T = stock.dense[ ch ] + ( stock.base[ ch ] - stock.dense[ ch ] ) * f;
+					worst          = std::max( worst, std::fabs( toLinear( got[ ch ] ) - T ) );
+				}
+			}
+			// A gutter, and the glass beside the card.
+			rig.Set( PT_COLUMNS, 2.0f );
+			rig.Set( PT_GUTTER, ParamFromGutter( 3.0 ) );
+			c = cardOf( rig );
+			aim( rig, c.FrameLeft( 0 ) + c.frameW + 0.5 * c.gutter, c.FrameTop( 0 ) + 0.5 * c.frameH, 20.0 );
+			if( !rig.Render( 2 ) )
+				return 1;
+			const float* gutter = pixelTop( rig.Output(), raster.w, raster.h, raster.w / 2, raster.h / 2 );
+			// The carriage cannot leave the card, so put its edge at the
+			// screen's centre and look a quarter of the screen to its left.
+			aim( rig, 0.0, c.FrameTop( 0 ) + 0.5 * c.frameH, 20.0 );
+			if( !rig.Render( 2 ) )
+				return 1;
+			const float* glass = pixelTop( rig.Output(), raster.w, raster.h, raster.w / 4, raster.h / 2 );
+			double gutterErr = 0.0, glassErr = 0.0;
+			for( int ch = 0; ch < 3; ++ch )
+			{
+				const double unexposed = stock.negative ? stock.base[ ch ] : stock.dense[ ch ];
+				gutterErr              = std::max( gutterErr, std::fabs( toLinear( gutter[ ch ] ) - unexposed ) );
+				glassErr               = std::max( glassErr, std::fabs( toLinear( glass[ ch ] ) - 1.0 ) );
+			}
+			rig.Set( PT_GUTTER, 0.0f );
+			Check( worst <= kTol && gutterErr <= kTol && glassErr <= kTol,
+			       fmt( "%dx%d, %s: worst |T - print| %.2g across a ramp; a gutter %.2g from %s; the glass %.2g from clear (bound %.2g)",
+			            raster.w, raster.h, InfoOf( PT_FILM ).options[ film ], worst, gutterErr, stock.negative ? "the base" : "the dye",
+			            glassErr, kTol ) );
+		}
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --screen: the hotspot is cos^4; the grain is the screen's; the dust is the
+// card's.
+//===========================================================================
+int runScreen( const Perturb& perturb )
+{
+	std::printf( "\n=== screen: the light falls off as cos^4 of the ray's angle; the diffuser's grain stays put while the card moves,\n"
+	             "    and the dust in the emulsion moves with it, by the carriage's travel times M\n" );
+	for( const Raster& raster : kRasters )
+	{
+		Rig rig;
+		if( !startRig( rig, raster, flatCard( raster.w, raster.h, 1.0f, 1.0f, 1.0f ), perturb ) )
+			return 1;
+		rig.Set( PT_COLUMNS, 1.0f );
+		rig.Set( PT_ROWS, 1.0f );
+		const reader::Card c = cardOf( rig );
+		const double cx = c.gridX + 0.5 * c.frameW, cy = c.gridY + 0.5 * c.frameH;
+		// The hotspot. The bound: float32 arithmetic on q and its square, and
+		// the output's sRGB round trip, each ~1e-6.
+		for( double h : { 0.5, 1.0 } )
+		{
+			rig.Set( PT_HOTSPOT, static_cast< float >( h ) );
+			aim( rig, cx, cy, 24.0 );
+			if( !rig.Render( 2 ) )
+				return 1;
+			const Floats out = rig.Output();
+			const double L   = ThrowFromParam( static_cast< float >( h ) );
+			double worst = 0.0, corner = 1.0;
+			for( int y = 0; y < raster.h; y += 2 )
+				for( int x = 0; x < raster.w; x += 2 )
+				{
+					const double sx = ( x + 0.5 - 0.5 * raster.w ) / pxPerMm( rig ), sy = ( y + 0.5 - 0.5 * raster.h ) / pxPerMm( rig );
+					const double expected = reader::Falloff( std::hypot( sx, sy ), L );
+					corner                = std::min( corner, expected );
+					worst = std::max( worst, std::fabs( toLinear( pixelTop( out, raster.w, raster.h, x, y )[ 0 ] ) - expected ) );
+				}
+			Check( worst <= 2e-4, fmt( "%dx%d, a %.0f mm throw: every pixel within %.2g of ( L^2 / ( L^2 + r^2 ) )^2 (the corners at %.3f; bound 2e-4)",
+			                           raster.w, raster.h, L, worst, corner, 2e-4 ) );
+		}
+		rig.Set( PT_HOTSPOT, 0.0f );
+
+		// The grain: two carriage positions on a flat frame, one pattern.
+		rig.Set( PT_SCREEN_GRAIN, 1.0f );
+		aim( rig, cx, cy, 24.0 );
+		if( !rig.Render( 2 ) )
+			return 1;
+		const Floats a = rig.Output();
+		aim( rig, cx + 1.3, cy - 0.7, 24.0 );
+		if( !rig.Render( 2 ) )
+			return 1;
+		const Floats b = rig.Output();
+		double differ = 0.0, mean = 0.0, sq = 0.0;
+		int n = 0;
+		for( size_t i = 0; i < a.size(); i += 4 )
+		{
+			differ = std::max( differ, static_cast< double >( std::fabs( a[ i ] - b[ i ] ) ) );
+			const double v = toLinear( a[ i ] );
+			mean += v;
+			sq += v * v;
+			++n;
+		}
+		mean /= n;
+		const double sd = std::sqrt( std::max( 0.0, sq / n - mean * mean ) );
+		Check( differ <= 1e-6 && sd >= 0.005,
+		       fmt( "%dx%d: the grain (%.1f%% scatter) is the same at two carriage positions 1.5 mm apart: worst difference %.2g (bound 1e-6)",
+		            raster.w, raster.h, 100.0 * sd / mean, differ ) );
+		rig.Set( PT_SCREEN_GRAIN, 0.0f );
+
+		// The dust: moved 17 px by the carriage, it is the same picture 17 px over.
+		rig.Set( PT_DUST, 1.0f );
+		const double M     = 24.0;
+		const int shift    = 17;
+		const double moved = shift / ( M * pxPerMm( rig ) );
+		aim( rig, cx, cy, M );
+		if( !rig.Render( 2 ) )
+			return 1;
+		const Floats d0 = rig.Output();
+		const double p0 = rig.plugin.HandForTest().Now().x;
+		aim( rig, cx + moved, cy, M );
+		if( !rig.Render( 2 ) )
+			return 1;
+		const Floats d1   = rig.Output();
+		const double p1   = rig.plugin.HandForTest().Now().x;
+		const double real = ( p1 - p0 ) * M * pxPerMm( rig );
+		double worst = 0.0, darkest = 1.0;
+		for( int y = 0; y < raster.h; ++y )
+			for( int x = 0; x + shift < raster.w; ++x )
+			{
+				const double was = toLinear( pixelTop( d0, raster.w, raster.h, x + shift, y )[ 0 ] );
+				const double now = toLinear( pixelTop( d1, raster.w, raster.h, x, y )[ 0 ] );
+				worst            = std::max( worst, std::fabs( was - now ) );
+				darkest          = std::min( darkest, was );
+			}
+		// The bound: the carriage's position comes through a float control,
+		// %.4f px from 17 here, against a dust edge a footprint wide.
+		Check( darkest < 0.9 && worst <= 5e-3,
+		       fmt( "%dx%d: dust (darkest %.2f) after the card moved %.3f px: the picture %d px over to %.2g (bound 5e-3)", raster.w,
+		            raster.h, darkest, real, shift, worst ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --filmed: a step-and-repeat camera, one frame per Interval, in reading order.
+//===========================================================================
+int runFilmed( const Perturb& perturb )
+{
+	std::printf( "\n=== filmed: the camera exposes the clip into the card's frames in reading order, one per Interval, wrapping;\n"
+	             "    each frame holds the clip as it was when it was exposed, and the rest are unexposed film\n" );
+	auto code = []( int f, int ch ) { return ch == 0 ? ( f % 8 ) / 7.0 : ch == 1 ? ( ( f / 8 ) % 8 ) / 7.0 : 0.5; };
+	for( const Raster& raster : kRasters )
+	{
+		Rig rig;
+		if( !startRig( rig, raster, flatCard( raster.w, raster.h, 0.0f, 0.0f, 0.5f ), perturb ) )
+			return 1;
+		rig.Set( PT_CONTENT, static_cast< float >( Content::Filmed ) );
+		rig.Set( PT_COLUMNS, 4.0f );
+		rig.Set( PT_ROWS, 3.0f );
+		const float intervalParam = ParamFromInterval( 0.0731 );
+		rig.Set( PT_INTERVAL, intervalParam );
+		const double interval = IntervalFromParam( intervalParam );
+		const reader::Card c  = cardOf( rig );
+		aim( rig, 0.5 * c.width, 0.5 * c.height, 2.0 );
+		rig.beforeFrame = [ & ]( int f ) {
+			Floats picture = flatCard( raster.w, raster.h, static_cast< float >( code( f, 0 ) ), static_cast< float >( code( f, 1 ) ), 0.5f );
+			rig.Upload( picture );
+		};
+		// Exposure k at the first frame whose time reaches k intervals.
+		std::vector< int > exposedAt;
+		for( int k = 0; k < 40; ++k )
+			exposedAt.push_back( static_cast< int >( std::ceil( k * interval * 60.0 - 1e-9 ) ) );
+		for( int stop : { 20, 70 } )
+		{
+			if( !rig.Render( stop - rig.frame ) )
+				return 1;
+			const int last = rig.frame - 1;
+			std::vector< int > holds( c.Frames(), -1 );
+			int exposures = 0;
+			for( int k = 0; k < 40 && exposedAt[ k ] <= last; ++k, ++exposures )
+				holds[ k % c.Frames() ] = exposedAt[ k ];
+			const Floats out = rig.Output();
+			const hand::State st = rig.plugin.HandForTest().Now();
+			int right = 0;
+			std::string first;
+			for( int cell = 0; cell < c.Frames(); ++cell )
+			{
+				const int col = cell % c.cols, row = cell / c.cols;
+				double i = 0.0, j = 0.0;
+				toScreen( rig, c.FrameLeft( col ) + 0.5 * c.frameW, c.FrameTop( row ) + 0.5 * c.frameH, st.x, st.y, std::exp2( st.logM ), i, j );
+				const float* p = pixelTop( out, raster.w, raster.h, static_cast< int >( std::lround( i ) ), static_cast< int >( std::lround( j ) ) );
+				bool ok        = true;
+				for( int ch = 0; ch < 3; ++ch )
+				{
+					const double expected = holds[ cell ] < 0 ? 0.0 : code( holds[ cell ], ch );
+					ok                    = ok && std::fabs( p[ ch ] - expected ) <= 1.0 / 255.0;
+				}
+				right += ok;
+				if( !ok && first.empty() )
+					first = fmt( " (frame %d: %.3f %.3f %.3f, expected clip frame %d)", cell, p[ 0 ], p[ 1 ], p[ 2 ], holds[ cell ] );
+			}
+			// One 8-bit level: the store keeps sRGB code in RGBA8.
+			Check( right == c.Frames() && rig.plugin.WrittenForTest() == std::min( exposures, c.Frames() ),
+			       fmt( "%dx%d after %d host frames, Interval %.4f s: %d exposures; %d of %d frames hold the clip frame they should "
+			            "(within one 8-bit level)%s",
+			            raster.w, raster.h, stop, interval, exposures, right, c.Frames(), first.c_str() ) );
+		}
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// --sync: with a beat, every act starts on it.
+//===========================================================================
+int runSync( const Perturb& perturb )
+{
+	std::printf( "\n=== sync: with Sync on Beat, every act starts on a beat -- at the beat's moment inside the frame, not the frame's\n" );
+	for( const Raster& raster : kRasters )
+	{
+		Rig rig;
+		if( !startRig( rig, raster, buildCard( raster.w, raster.h ), perturb ) )
+			return 1;
+		rig.bpm = 117.0;
+		rig.Set( PT_OPERATOR, static_cast< float >( Operator::Auto ) );
+		rig.Set( PT_SYNC, static_cast< float >( Sync::Beat ) );
+		rig.Set( PT_BROWSE, static_cast< float >( Browse::Skimming ) );
+		rig.Set( PT_DWELL, ParamFromDwell( 0.1 ) );
+		rig.Set( PT_CRASH_ZOOM, 0.0f );
+		rig.plugin.SetHandLoggingForTest( true );
+		if( !rig.Render( 1200 ) )
+			return 1;
+		const double beat = 60.0 / 117.0;
+		int acts = 0;
+		double worst = 0.0, shortest = 1e9;
+		const auto& log = rig.plugin.HandForTest().Log();
+		for( size_t k = 0; k + 1 < log.size(); ++k )
+			if( log[ k ].tag == hand::Tag::Dwell && std::isfinite( log[ k ].End() ) && log[ k ].End() < rig.plugin.HandForTest().Time() )
+			{
+				const double end = log[ k ].End();
+				worst            = std::max( worst, std::fabs( end - std::round( end / beat ) * beat ) );
+				shortest         = std::min( shortest, log[ k ].T );
+				++acts;
+			}
+		// The bound: Resolume's bar phase is a float, good to ~6e-8 of a
+		// 2.05 s bar; interpolated across a frame, a microsecond is ample.
+		Check( acts >= 10 && worst <= 1e-6 && shortest >= hand::kMinSyncDwell - 1e-9,
+		       fmt( "%dx%d at 117 BPM: %d acts, each starting within %.2g s of a beat (bound 1e-6), none after less than %.2f s of dwell (%.3f)",
+		            raster.w, raster.h, acts, worst, hand::kMinSyncDwell, shortest ) );
+	}
+	return Verdict();
+}
+
+//===========================================================================
+// The hand, without GL.
+//===========================================================================
+struct HandRun
+{
+	hand::Settings s;
+	reader::Card card;
+	reader::Bow bow;
+	hand::Hand h;
+	std::vector< std::pair< double, std::pair< double, double > > > path;///< ( t, hand x, y )
+	bool keepPath = false;
+
+	HandRun( int cols, int rows, double flatness, uint32_t seed, int hooks )
+	{
+		card = reader::MakeCard( cols, rows, 0.8, 16.0 / 9.0 );
+		s.seed = seed;
+		bow.Build( card, flatness, seed );
+		h.SetHooks( hooks );
+		h.SetLogging( true );
+	}
+	void Run( double seconds, double dt )
+	{
+		const int steps = static_cast< int >( std::lround( seconds / dt ) );
+		h.Advance( 0.0, s, card, bow, false, false );
+		for( int k = 0; k < steps; ++k )
+		{
+			h.Advance( dt, s, card, bow, false, false );
+			if( keepPath )
+				path.push_back( { h.Time(), { h.HandX(), h.HandY() } } );
+		}
+	}
+};
+
+//===========================================================================
+// --fitts (no GL): aimed movements.
+//===========================================================================
+int runFitts( const Perturb& perturb )
+{
+	std::printf( "\n=== fitts: every pan's first submovement takes a + b log2( D / W + 1 ) and is minimum jerk (peak speed 1.875 D / T at\n"
+	             "    T / 2); it lands 4%% short with a scatter of k D along and 0.4 k D across, at every distance; a correction follows\n"
+	             "    exactly when it lands outside W / 2\n" );
+	HandRun run( 14, 7, 0.0, 7, perturb.handHooks );
+	run.s.browse    = Browse::Searching;
+	run.s.crashZoom = 0.0;
+	run.s.rigid     = true;
+	run.s.dwell     = 0.2;
+	run.keepPath    = true;
+	run.Run( 900.0, 1.0 / 240.0 );
+	const auto& log = run.h.Log();
+
+	double worstTime = 0.0, worstPeak = 0.0, worstMid = 0.0;
+	int profiled = 0;
+	std::vector< double > along, across, alongShort, alongLong;
+	std::vector< double > distances;
+	for( const hand::Segment& g : log )
+		if( g.kind == hand::Segment::Kind::Pan )
+			distances.push_back( g.aim );
+	std::vector< double > sorted = distances;
+	std::sort( sorted.begin(), sorted.end() );
+	const double median = sorted.empty() ? 0.0 : sorted[ sorted.size() / 2 ];
+	int corrections = 0, rightCalls = 0, calls = 0;
+	size_t cursor   = 0;
+	for( size_t k = 0; k < log.size(); ++k )
+	{
+		const hand::Segment& g = log[ k ];
+		if( g.kind != hand::Segment::Kind::Pan )
+			continue;
+		const double fitts = hand::kFittsA + run.s.fittsB * std::log2( g.aim / g.tolerance + 1.0 );
+		worstTime          = std::max( worstTime, std::fabs( g.T - fitts ) );
+		// The executed motion, sampled every 1/240 s: its peak speed and its midpoint.
+		const double D = std::hypot( g.bx - g.ax, g.by - g.ay );
+		if( g.T > 0.15 && D > 0.5 && !run.path.empty() && g.End() < run.path.back().first )
+		{
+			double peak = 0.0, midErr = 1e9;
+			while( cursor < run.path.size() && run.path[ cursor ].first < g.t0 )
+				++cursor;
+			for( size_t i = cursor; i + 1 < run.path.size() && run.path[ i + 1 ].first <= g.End(); ++i )
+			{
+				const double dt = run.path[ i + 1 ].first - run.path[ i ].first;
+				const double v  = std::hypot( run.path[ i + 1 ].second.first - run.path[ i ].second.first,
+				                              run.path[ i + 1 ].second.second - run.path[ i ].second.second ) / dt;
+				peak            = std::max( peak, v );
+				const double tm = 0.5 * ( run.path[ i ].first + run.path[ i + 1 ].first );
+				if( std::fabs( tm - ( g.t0 + 0.5 * g.T ) ) < 0.5 * dt )
+					midErr = std::fabs( 0.5 * ( run.path[ i ].second.first + run.path[ i + 1 ].second.first ) - 0.5 * ( g.ax + g.bx ) )
+					       + std::fabs( 0.5 * ( run.path[ i ].second.second + run.path[ i + 1 ].second.second ) - 0.5 * ( g.ay + g.by ) );
+			}
+			(void)midErr;
+			worstPeak = std::max( worstPeak, std::fabs( peak / ( 1.875 * D / g.T ) - 1.0 ) );
+			++profiled;
+		}
+		// The scatter, about the target, in units of the distance aimed.
+		const bool clamped = g.bx <= 0.0 || g.by <= 0.0 || g.bx >= run.card.width || g.by >= run.card.height;
+		if( !clamped && g.aim > 1e-6 )
+		{
+			const double ux = ( g.tx - g.ax ) / g.aim, uy = ( g.ty - g.ay ) / g.aim;
+			const double ex = g.bx - g.ax, ey = g.by - g.ay;
+			const double a  = ( ex * ux + ey * uy ) / g.aim - hand::kPrimaryGain;
+			along.push_back( a );
+			across.push_back( ( -ex * uy + ey * ux ) / g.aim );
+			( g.aim < median ? alongShort : alongLong ).push_back( a );
+		}
+		// The next pan, if any, is a correction exactly when this one missed.
+		const double miss = std::hypot( g.bx - g.tx, g.by - g.ty );
+		size_t next       = k + 1;
+		while( next < log.size() && log[ next ].kind == hand::Segment::Kind::Wait && log[ next ].tag == hand::Tag::Wait )
+			++next;
+		const bool corrected = next < log.size() && log[ next ].tag == hand::Tag::Correction;
+		corrections += corrected;
+		// Corrections already made on this target, this one included.
+		int already = 0;
+		for( size_t back = k + 1; back-- > 0; )
+		{
+			if( log[ back ].tag == hand::Tag::Wait )
+				continue;
+			if( log[ back ].tag != hand::Tag::Correction )
+				break;
+			++already;
+		}
+		if( next < log.size() )
+		{
+			++calls;
+			rightCalls += corrected == ( miss > 0.5 * g.tolerance && already < hand::kMaxCorrections );
+		}
+	}
+	auto sd = []( const std::vector< double >& v ) {
+		double m = 0.0, q = 0.0;
+		for( double x : v )
+			m += x;
+		m /= std::max< size_t >( v.size(), 1 );
+		for( double x : v )
+			q += ( x - m ) * ( x - m );
+		return std::sqrt( q / std::max< size_t >( v.size() - 1, 1 ) );
+	};
+	auto mean = []( const std::vector< double >& v ) {
+		double m = 0.0;
+		for( double x : v )
+			m += x;
+		return m / std::max< size_t >( v.size(), 1 );
+	};
+	const double k = run.s.noiseK;
+	// 4 sigma of each estimate: an SD from n normal draws has relative SE
+	// 1 / sqrt( 2 n ); a mean has SE k / sqrt( n ).
+	auto sdOk = [ & ]( const std::vector< double >& v, double expected ) {
+		return std::fabs( sd( v ) / expected - 1.0 ) <= 4.0 / std::sqrt( 2.0 * v.size() );
+	};
+	Check( distances.size() >= 500 && worstTime <= 1e-12,
+	       fmt( "%zu pans over 900 s: every duration a + b log2( D / W + 1 ) to %.1g s (a %.2f s, b %.3f s/bit)", distances.size(), worstTime,
+	            hand::kFittsA, run.s.fittsB ) );
+	// 1%: a speed from positions 1/240 s apart is the mean over that span,
+	// and minimum jerk's speed is flat at its peak (0.05% low at T = 0.15 s),
+	// but the span need not straddle T / 2 (a cubic ease peaks at 1.5).
+	(void)worstMid;
+	Check( profiled >= 300 && worstPeak <= 0.01,
+	       fmt( "%d whole pans sampled every 1/240 s: peak speed within %.2f%% of minimum jerk's 1.875 D / T (bound 1%%)", profiled,
+	            100.0 * worstPeak ) );
+	Check( sdOk( along, k ) && sdOk( across, hand::kAcrossShare * k ) && std::fabs( mean( along ) ) <= 4.0 * k / std::sqrt( along.size() )
+	           && sdOk( alongShort, k ) && sdOk( alongLong, k ),
+	       fmt( "landing: along %+.4f mean (0 after the 4%% undershoot), SD %.4f D; across SD %.4f D; short pans SD %.4f D, long %.4f D "
+	            "(k %.3f, 0.4 k %.3f; bounds 4 sigma)",
+	            mean( along ), sd( along ), sd( across ), sd( alongShort ), sd( alongLong ), k, hand::kAcrossShare * k ) );
+	Check( calls >= 500 && rightCalls == calls && corrections >= 50,
+	       fmt( "%d corrections: %d of %d pans followed by one exactly when they landed outside W / 2", corrections, rightCalls, calls ) );
+	return Verdict();
+}
+
+//===========================================================================
+// --operator-law (no GL): what the operator never does.
+//===========================================================================
+int runOperatorLaw( const Perturb& perturb )
+{
+	std::printf( "\n=== operator-law: in every Browse mode the carriage stays on the card and the lens in its range, acts keep coming;\n"
+	             "    Reading goes view by view, Searching visits every view alike; a seed browses the same way every time\n" );
+	for( int mode = 0; mode < static_cast< int >( Browse::Count ); ++mode )
+	{
+		HandRun run( 4, 3, 0.3, 3, perturb.handHooks );
+		run.s.browse = static_cast< Browse >( mode );
+		run.s.dwell  = 0.2;
+		run.s.readZoom = 12.0;
+		const std::vector< hand::View > views = hand::MakeViews( run.card, run.s.readZoom, run.s.screenW, run.s.screenH );
+		double minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9, minM = 1e9, maxM = -1e9;
+		run.h.Advance( 0.0, run.s, run.card, run.bow, false, false );
+		for( int f = 0; f < 60 * 1500; ++f )
+		{
+			run.h.Advance( 1.0 / 60.0, run.s, run.card, run.bow, false, false );
+			const hand::State st = run.h.Now();
+			minX = std::min( minX, st.x );
+			maxX = std::max( maxX, st.x );
+			minY = std::min( minY, st.y );
+			maxY = std::max( maxY, st.y );
+			minM = std::min( minM, st.logM );
+			maxM = std::max( maxM, st.logM );
+		}
+		std::vector< int > visits( views.size(), 0 ), offsets( views.size(), 0 );
+		int acts = 0, inOrder = 0, steps = 0, last = -1;
+		for( const hand::Segment& g : run.h.Log() )
+			if( g.tag == hand::Tag::Primary )
+			{
+				int view = -1;
+				for( size_t v = 0; v < views.size(); ++v )
+					if( std::fabs( views[ v ].x - g.tx ) < 1e-9 && std::fabs( views[ v ].y - g.ty ) < 1e-9 )
+						view = static_cast< int >( v );
+				if( view >= 0 )
+					++visits[ static_cast< size_t >( view ) ];
+				if( last >= 0 && view >= 0 )
+				{
+					++steps;
+					const int offset = ( view - last + static_cast< int >( views.size() ) ) % static_cast< int >( views.size() );
+					inOrder += offset == 1;
+					++offsets[ static_cast< size_t >( offset ) ];
+				}
+				last = view;
+				++acts;
+			}
+		const bool onCard = minX >= 0.0 && minY >= 0.0 && maxX <= run.card.width && maxY <= run.card.height;
+		const bool inLens = minM >= std::log2( reader::kMinZoom ) - 1e-12 && maxM <= std::log2( reader::kMaxZoom ) + 1e-12;
+		std::string extra;
+		bool ok = onCard && inLens && acts >= 300;
+		if( mode == static_cast< int >( Browse::Reading ) )
+		{
+			ok    = ok && inOrder == steps;
+			extra = fmt( "; %d of %d steps to the next view", inOrder, steps );
+		}
+		if( mode == static_cast< int >( Browse::Searching ) )
+		{
+			// Each jump is to any other view alike: the offset from the view it
+			// leaves is uniform over 1 .. V - 1. (Visits alone cannot tell: any
+			// random walk round the card visits every view alike.)
+			double chi = 0.0;
+			const int V = static_cast< int >( views.size() );
+			const double expected = static_cast< double >( steps ) / ( V - 1 );
+			for( int o = 1; o < V; ++o )
+				chi += ( offsets[ static_cast< size_t >( o ) ] - expected ) * ( offsets[ static_cast< size_t >( o ) ] - expected ) / expected;
+			// The 0.1% point of chi-square on V - 2 degrees of freedom, by
+			// Wilson and Hilferty's cube-root approximation.
+			const double k     = V - 2;
+			const double point = k * std::pow( 1.0 - 2.0 / ( 9.0 * k ) + 3.0902 * std::sqrt( 2.0 / ( 9.0 * k ) ), 3.0 );
+			ok    = ok && offsets[ 0 ] == 0 && chi <= point;
+			extra = fmt( "; never the view it is on; jump offsets chi-square %.1f on %d degrees of freedom (0.1%% point %.1f)", chi, V - 2, point );
+		}
+		Check( ok, fmt( "%s, 1500 s: %d acts; carriage within x %.1f..%.1f, y %.1f..%.1f of a %.0f x %.1f mm card; lens %.1fx..%.1fx%s",
+		                InfoOf( PT_BROWSE ).options[ mode ], acts, minX, maxX, minY, maxY, run.card.width, run.card.height,
+		                std::exp2( minM ), std::exp2( maxM ), extra.c_str() ) );
+	}
+	// The same seed browses the same way; another does not.
+	auto signature = [ & ]( uint32_t seed ) {
+		HandRun run( 14, 7, 0.3, seed, perturb.handHooks );
+		run.Run( 60.0, 1.0 / 60.0 );
+		std::vector< double > out;
+		for( const hand::Segment& g : run.h.Log() )
+			out.insert( out.end(), { g.t0, g.T, g.bx, g.by, g.b } );
+		return out;
+	};
+	const auto a = signature( 5 ), b = signature( 5 ), c = signature( 6 );
+	Check( a == b && a != c, fmt( "seed 5 twice: %s; seed 6: %s", a == b ? "identical" : "DIFFERENT", a != c ? "different" : "IDENTICAL" ) );
+	return Verdict();
+}
+
+//===========================================================================
+// --resize: a new raster is a fresh card.
+//===========================================================================
+int runResize( const Perturb& perturb )
+{
+	std::printf( "\n=== resize: after the host's raster changes, the reader is exactly a fresh instance's at the new raster\n" );
+	const Floats a = buildCard( 1280, 720 );
+	const Floats b = noiseCard( 640, 360, 5 );
+	auto configure = []( Rig& rig ) {
+		quiet( rig );
+		rig.Set( PT_CONTENT, static_cast< float >( Content::Filmed ) );
+		rig.Set( PT_INTERVAL, 0.0f );
+		rig.Set( PT_COLUMNS, 4.0f );
+		rig.Set( PT_ROWS, 3.0f );
+		rig.Set( PT_ZOOM, 0.0f );
+		rig.Set( PT_SCREEN_GRAIN, 0.5f );
+		rig.Set( PT_DUST, 0.5f );
+	};
+	Rig resized;
+	if( !resized.Init( 1280, 720, &a ) )
+		return 1;
+	resized.plugin.SetHooksForTest( perturb.hooks );
+	resized.plugin.SetResizeKeepsStoreForTest( perturb.resizeKeeps );
+	configure( resized );
+	if( !resized.Render( 30 ) || !resized.Resize( 640, 360, &b ) || !resized.Render( 3 ) )
+		return 1;
+	Rig fresh;
+	if( !fresh.Init( 640, 360, &b ) )
+		return 1;
+	configure( fresh );
+	fresh.frame = resized.frame - 3;
+	if( !fresh.Render( 3 ) )
+		return 1;
+	const Floats x = resized.Output(), y = fresh.Output();
+	int differ     = 0;
+	for( size_t i = 0; i < x.size(); ++i )
+		differ += byteOf( x[ i ] ) != byteOf( y[ i ] );
+	Check( differ == 0, fmt( "1280x720 for 30 frames filming a frame each, then 640x360 for 3, against a fresh 640x360 for 3: %d bytes differ",
+	                         differ ) );
+	return Verdict();
+}
+
+//===========================================================================
+// --state: the GL state the host hands over is the state it gets back.
+//===========================================================================
+int runState( const Perturb& )
+{
+	std::printf( "\n=== state: the GL state the host hands over is the state it gets back\n" );
+	Rig rig;
+	if( !rig.Init( 320, 180 ) )
+		return 1;
+	rig.Set( PT_CONTENT, static_cast< float >( Content::Filmed ) );
+	rig.Set( PT_INTERVAL, 0.0f );
+	GLuint hostArray = 0, hostBuffer = 0;
+	glGenVertexArrays( 1, &hostArray );
+	glGenBuffers( 1, &hostBuffer );
+	int problems = 0;
+	std::string what;
+	for( int frame = 0; frame < 3; ++frame )
+	{
+		glBindFramebuffer( GL_FRAMEBUFFER, rig.outputFBO );
+		glViewport( 7, 5, 300, 170 );
+		glBindVertexArray( hostArray );
+		glBindBuffer( GL_ARRAY_BUFFER, hostBuffer );
+		glEnable( GL_BLEND );
+		glBlendFuncSeparate( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO );
+		glClearColor( 0.2f, 0.3f, 0.4f, 0.5f );
+		glEnable( GL_SCISSOR_TEST );
+		glScissor( 0, 0, 320, 180 );
+		glActiveTexture( GL_TEXTURE0 );
+		glUseProgram( 0 );
+		rig.plugin.SetTime( frame / 60.0 );
+		if( rig.plugin.ProcessOpenGL( &rig.process ) != FF_SUCCESS )
+			return 1;
+		GLint viewport[ 4 ] = {}, array = 0, buffer = 0, program = 0, unit = 0, fbo = 0, src = 0, dst = 0;
+		GLfloat clear[ 4 ]   = {};
+		GLboolean mask[ 4 ]  = {};
+		glGetIntegerv( GL_VIEWPORT, viewport );
+		glGetIntegerv( GL_VERTEX_ARRAY_BINDING, &array );
+		glGetIntegerv( GL_ARRAY_BUFFER_BINDING, &buffer );
+		glGetIntegerv( GL_CURRENT_PROGRAM, &program );
+		glGetIntegerv( GL_ACTIVE_TEXTURE, &unit );
+		glGetIntegerv( GL_FRAMEBUFFER_BINDING, &fbo );
+		glGetIntegerv( GL_BLEND_SRC_RGB, &src );
+		glGetIntegerv( GL_BLEND_DST_RGB, &dst );
+		glGetFloatv( GL_COLOR_CLEAR_VALUE, clear );
+		glGetBooleanv( GL_COLOR_WRITEMASK, mask );
+		auto expect = [ & ]( bool ok, const char* name ) {
+			if( !ok )
+			{
+				++problems;
+				what += std::string( " " ) + name;
+			}
+		};
+		expect( viewport[ 0 ] == 7 && viewport[ 1 ] == 5 && viewport[ 2 ] == 300 && viewport[ 3 ] == 170, "viewport" );
+		expect( array == static_cast< GLint >( hostArray ), "vertex-array" );
+		expect( buffer == static_cast< GLint >( hostBuffer ), "array-buffer" );
+		expect( program == 0, "program" );
+		expect( unit == GL_TEXTURE0, "active-unit" );
+		expect( fbo == static_cast< GLint >( rig.outputFBO ), "framebuffer" );
+		expect( glIsEnabled( GL_BLEND ) && src == GL_SRC_ALPHA && dst == GL_ONE_MINUS_SRC_ALPHA, "blend" );
+		expect( glIsEnabled( GL_SCISSOR_TEST ), "scissor" );
+		expect( clear[ 0 ] == 0.2f && clear[ 1 ] == 0.3f && clear[ 2 ] == 0.4f && clear[ 3 ] == 0.5f, "clear-colour" );
+		expect( mask[ 0 ] && mask[ 1 ] && mask[ 2 ] && mask[ 3 ], "colour-mask" );
+		for( int u = 0; u < 10; ++u )
+		{
+			GLint bound = 0, boundArray = 0;
+			glActiveTexture( static_cast< GLenum >( GL_TEXTURE0 + u ) );
+			glGetIntegerv( GL_TEXTURE_BINDING_2D, &bound );
+			glGetIntegerv( GL_TEXTURE_BINDING_2D_ARRAY, &boundArray );
+			expect( bound == 0 && boundArray == 0, "texture-unit" );
+		}
+		glActiveTexture( GL_TEXTURE0 );
+	}
+	glDisable( GL_SCISSOR_TEST );
+	glDisable( GL_BLEND );
+	glBindVertexArray( 0 );
+	glBindBuffer( GL_ARRAY_BUFFER, 0 );
+	glDeleteVertexArrays( 1, &hostArray );
+	glDeleteBuffers( 1, &hostBuffer );
+	Check( problems == 0, fmt( "three frames with the filmed store live: viewport, vertex array, array buffer, program, active unit, "
+	                           "framebuffer, blend, scissor, clear colour, colour mask, ten texture units (%d wrong:%s)",
+	                           problems, what.empty() ? " none" : what.c_str() ) );
+	return Verdict();
+}
+
+//===========================================================================
+// --bench: GPU time per frame from GL_TIME_ELAPSED.
+//===========================================================================
+int runBench()
+{
+	struct Size
+	{
+		int w, h;
+		const char* name;
+	};
+	const Size sizes[] = { { 1280, 720, "720p" }, { 1920, 1080, "1080p" }, { 3840, 2160, "4K" } };
+	struct Case
+	{
+		const char* what;
+		std::function< void( Rig& ) > set;
+	};
+	const Case cases[] = {
+		{ "defaults (the operator browsing)", []( Rig& ) {} },
+		{ "every pixel 32 taps (1 mm out, panning)", []( Rig& r ) {
+			 r.Set( PT_OPERATOR, static_cast< float >( Operator::Manual ) );
+			 r.Set( PT_FOCUS, ParamFromDefocus( 1.0 ) );
+			 r.Set( PT_SHUTTER, 1.0f );
+			 r.beforeFrame = [ &r ]( int f ) { r.Set( PT_POSITION_X, static_cast< float >( 0.3 + 0.002 * f ) ); };
+		 } },
+		{ "Filmed, a frame every 0.05 s", []( Rig& r ) {
+			 r.Set( PT_CONTENT, static_cast< float >( Content::Filmed ) );
+			 r.Set( PT_INTERVAL, 0.0f );
+		 } },
+	};
+	std::printf( "\n=== bench: GPU time per frame (GL_TIME_ELAPSED), after 120 frames of warm-up, median and worst of 120\n" );
+	GLuint query = 0;
+	glGenQueries( 1, &query );
+	for( const Case& c : cases )
+		for( const Size& size : sizes )
+		{
+			Rig rig;
+			if( !rig.Init( size.w, size.h ) )
+				return 1;
+			c.set( rig );
+			if( !rig.Render( 120 ) )
+				return 1;
+			constexpr int kTimed = 120;
+			std::vector< double > times;
+			for( int f = 0; f < kTimed; ++f )
+			{
+				glBeginQuery( GL_TIME_ELAPSED, query );
+				if( !rig.Render( 1 ) )
+					return 1;
+				glEndQuery( GL_TIME_ELAPSED );
+				GLuint64 ns = 0;
+				glGetQueryObjectui64v( query, GL_QUERY_RESULT, &ns );
+				times.push_back( static_cast< double >( ns ) * 1e-6 );
+			}
+			std::sort( times.begin(), times.end() );
+			std::printf( "  %-42s %-6s median %6.2f ms/frame, worst %6.2f  (%4.1f%% of a 60 fps frame)\n", c.what, size.name,
+			             times[ kTimed / 2 ], times.back(), 100.0 * times[ kTimed / 2 ] / ( 1000.0 / 60.0 ) );
+		}
+	glDeleteQueries( 1, &query );
+	return 0;
 }
 
 //===========================================================================
@@ -940,9 +2615,13 @@ struct CheckEntry
 const std::vector< CheckEntry >& checks()
 {
 	static const std::vector< CheckEntry > list = {
-		{ "identity", runIdentity, false },
-		{ "cues", runCues, true },
-		{ "names", runNames, true },
+		{ "identity", runIdentity, false }, { "mips", runMips, false },         { "dark", runDark, false },
+		{ "magnify", runMagnify, false },   { "defocus", runDefocus, false },
+		{ "field", runField, false },       { "track", runTrack, false },       { "carriage", runCarriage, false },
+		{ "shutter", runShutter, false },   { "hunt", runHunt, false },         { "stock", runStock, false },
+		{ "screen", runScreen, false },     { "filmed", runFilmed, false },     { "sync", runSync, false },
+		{ "resize", runResize, false },     { "state", runState, false },       { "fitts", runFitts, true },
+		{ "operator-law", runOperatorLaw, true }, { "cues", runCues, true },    { "names", runNames, true },
 	};
 	return list;
 }
@@ -975,6 +2654,27 @@ int runNegative( bool offlineOnly = false )
 	};
 	using namespace shaders;
 	add( "identity", runIdentity, "the lens 2% stronger than it says", []( Perturb& p ) { p.hooks = kHookMagnify; } );
+	add( "mips", runMips, "the clip's mips a plain 2 x 2 box, dropping odd rows", []( Perturb& p ) { p.hooks = kHookPlainBox; } );
+	add( "dark", runDark, "box coverage as min - max of card positions", []( Perturb& p ) { p.hooks = kHookNaiveCover; } );
+	add( "magnify", runMagnify, "the lens 2% stronger than it says", []( Perturb& p ) { p.hooks = kHookMagnify; } );
+	add( "defocus", runDefocus, "the blur circle without the ( M + 1 )", []( Perturb& p ) { p.hooks = kHookNoPlusOne; } );
+	add( "defocus", runDefocus, "aperture taps at radius ( j + 0.5 ) / N, a cone", []( Perturb& p ) { p.hooks = kHookLinearDisc; } );
+	add( "field", runField, "the bow read with the wrong sign", []( Perturb& p ) { p.hooks = kHookBowFlip; } );
+	add( "track", runTrack, "the picture shown the hand, not the carriage", []( Perturb& p ) { p.showHand = true; } );
+	add( "carriage", runCarriage, "the grip integrated by forward Euler", []( Perturb& p ) { p.handHooks = hand::kHookEulerGrip; } );
+	add( "shutter", runShutter, "an exposure twice as long as Shutter says", []( Perturb& p ) { p.shutter = 2.0; } );
+	add( "hunt", runHunt, "the hunt turns at the band's edge, with no reaction time", []( Perturb& p ) { p.handHooks = hand::kHookNoReaction; } );
+	add( "stock", runStock, "a negative stock printed positive", []( Perturb& p ) { p.hooks = kHookNoNegative; } );
+	add( "screen", runScreen, "cos^3 instead of cos^4", []( Perturb& p ) { p.hooks = kHookCubeFalloff; } );
+	add( "screen", runScreen, "the screen's grain riding on the card", []( Perturb& p ) { p.hooks = kHookGrainOnCard; } );
+	add( "screen", runScreen, "dust that stays on the screen", []( Perturb& p ) { p.hooks = kHookDustOnScreen; } );
+	add( "filmed", runFilmed, "the camera fills columns first", []( Perturb& p ) { p.hooks = kHookColumnOrder; } );
+	add( "sync", runSync, "a beat starts an act at the start of its frame", []( Perturb& p ) { p.cueEarly = true; } );
+	add( "resize", runResize, "the store's exposures survive a reallocation", []( Perturb& p ) { p.resizeKeeps = true; } );
+	add( "fitts", runFitts, "ID = log2( D / W ), without Shannon's + 1", []( Perturb& p ) { p.handHooks = hand::kHookFittsNoOne; } );
+	add( "fitts", runFitts, "a cubic ease instead of minimum jerk", []( Perturb& p ) { p.handHooks = hand::kHookCubicProfile; } );
+	add( "fitts", runFitts, "endpoint scatter that ignores the distance", []( Perturb& p ) { p.handHooks = hand::kHookFlatScatter; } );
+	add( "operator-law", runOperatorLaw, "Searching only ever looks in the next half of the card", []( Perturb& p ) { p.handHooks = hand::kHookBiasedSearch; } );
 	add( "cues", runCues, "ramp every control between keys", []( Perturb& p ) { p.cuesRamp = true; } );
 
 	if( offlineOnly )
@@ -1032,9 +2732,11 @@ int main( int argc, char** argv )
 			             "  --pipe            raw RGBA frames in on stdin, out on stdout\n"
 			             "  --film N          N frames of the card, raw RGBA on stdout\n"
 			             "  --script PATH     cues for --pipe/--film: 'frame Name value'\n\n"
-			             "  checks: --identity\n"
-			             "          no GL: --cues --names\n"
-			             "          --negative\n"
+			             "  --trace           (with --frames) the hand's segments and state, frame by frame\n\n"
+			             "  checks: --identity --mips --dark --magnify --defocus --field --track --carriage --shutter --hunt --stock --screen\n"
+			             "          --filmed --sync --resize --state\n"
+			             "          no GL: --fitts --operator-law --cues --names\n"
+			             "          --negative   --bench\n"
 			             "  --offline         the checks and negative controls that need no GL context (CI)\n" );
 			return 0;
 		}
@@ -1143,6 +2845,8 @@ int main( int argc, char** argv )
 		result = runPipe( width, height, fps, scriptPath, filmFrames, false, settings, moving );
 	else if( mode == "negative" )
 		result = runNegative();
+	else if( mode == "bench" )
+		result = runBench();
 	else if( mode == "trace" )
 	{
 		// The hand, frame by frame: what the reader is doing, and what the

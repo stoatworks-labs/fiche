@@ -144,6 +144,7 @@ struct Segment
 	double a = 0.0, b = 0.0;                      ///< Zoom: log2 M; Focus: the knob
 	double aim = 0.0;      ///< Pan: the distance to the TARGET, which the scatter scales with
 	double tolerance = 0.0;///< Pan: the target W on the card
+	double tx = 0.0, ty = 0.0;///< Pan: the target itself
 	bool untilCue = false; ///< a synced dwell: ends on a beat
 	double End() const
 	{
@@ -171,7 +172,8 @@ enum HandHook : int
 	kHookCubicProfile = 1 << 1,///< a cubic ease instead of minimum jerk
 	kHookFlatScatter  = 1 << 2,///< endpoint scatter that ignores the distance
 	kHookNoReaction   = 1 << 3,///< a hunt that turns at the band's edge, no reaction time
-	kHookEulerGrip    = 1 << 4 ///< the carriage by forward Euler
+	kHookEulerGrip    = 1 << 4,///< the carriage by forward Euler
+	kHookBiasedSearch = 1 << 5 ///< Searching only ever looks in the next half of the card
 };
 
 class Hand
@@ -183,8 +185,10 @@ public:
 	void Reset( const Settings& s, const reader::Card& card, const reader::Bow& bow );
 
 	/// `dt` seconds of the host's clock. `jump` is a press of Jump this frame;
-	/// `cue` is a beat (at Sync's division) crossed since the last frame.
-	void Advance( double dt, const Settings& s, const reader::Card& card, const reader::Bow& bow, bool jump, bool cue );
+	/// `cue` is a beat (at Sync's division) that fell `cueOffset` seconds
+	/// into this frame.
+	void Advance( double dt, const Settings& s, const reader::Card& card, const reader::Bow& bow, bool jump, bool cue,
+	              double cueOffset = 0.0 );
 
 	State Now() const;
 	/// `count` states evenly spread over the last `window` seconds, each at
@@ -280,6 +284,7 @@ private:
 	// The hand's intent, and the carriage on its grip.
 	double hx = 0.0, hy = 0.0, logM = 0.0, z = 0.0;
 	double cx = 0.0, cy = 0.0, cvx = 0.0, cvy = 0.0;
+	double travelW = reader::kCardWidth, travelH = 1e9;///< the carriage's end stops: the card
 
 	// The plan.
 	std::deque< Segment > queue;
@@ -291,7 +296,7 @@ private:
 	double targetX = 0.0, targetY = 0.0;
 	double travelLogM = 0.0;
 	bool pendingJump = false, pendingCue = false;
-	double frameStart = 0.0;
+	double frameStart = 0.0, cueAt = 0.0;
 
 	// Manual.
 	bool manualMode = false;

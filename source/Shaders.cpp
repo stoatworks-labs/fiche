@@ -78,25 +78,39 @@ void main()
 )";
 
 //---------------------------------------------------------------------------
-// 2. One box mip level of the live texture. The texture's BASE and MAX level
-// are both the level below while this runs, so the level being written is not
-// one being read (GL 4.1, 9.3.1), and texelFetch's level 0 is that level.
+// 2. One mip level of the live texture: each texel the AREA average of its
+// share of the level below. A level of D texels stands for the same picture
+// as the S below it, so each covers S / D of them: exactly two when S is
+// even, two and a bit when it is odd -- where a plain 2x2 box would drop the
+// last row and leave every coarser level describing a slightly smaller
+// picture than [ 0, 1 ] says (a 2% shift by level 3 of a 180-row clip). The
+// texture's BASE and MAX level are both the level below while this runs, so
+// the level being written is not one being read (GL 4.1, 9.3.1), and
+// texelFetch's level 0 is that level.
 //---------------------------------------------------------------------------
 const char* const kMipFragment = R"(
 uniform sampler2D Source;
 uniform ivec2 SourceSize;
+uniform ivec2 TargetSize;
 
 out vec4 fragColor;
 
 void main()
 {
-	ivec2 p  = 2 * ivec2( gl_FragCoord.xy );
-	ivec2 hi = SourceSize - 1;
-	vec4 a   = texelFetch( Source, min( p, hi ), 0 );
-	vec4 b   = texelFetch( Source, min( p + ivec2( 1, 0 ), hi ), 0 );
-	vec4 c   = texelFetch( Source, min( p + ivec2( 0, 1 ), hi ), 0 );
-	vec4 d   = texelFetch( Source, min( p + ivec2( 1, 1 ), hi ), 0 );
-	fragColor = 0.25 * ( a + b + c + d );
+	ivec2 p    = ivec2( gl_FragCoord.xy );
+	vec2 scale = ( Hooks & 1024 ) != 0 ? vec2( 2.0 ) : vec2( SourceSize ) / vec2( TargetSize );
+	vec2 lo    = vec2( p ) * scale;
+	vec2 hi    = lo + scale;
+	vec4 sum   = vec4( 0.0 );
+	for( int j = 0; j < 3; ++j )
+		for( int i = 0; i < 3; ++i )
+		{
+			ivec2 t = ivec2( floor( lo ) ) + ivec2( i, j );
+			vec2 w  = max( min( hi, vec2( t ) + 1.0 ) - max( lo, vec2( t ) ), vec2( 0.0 ) );
+			if( w.x * w.y > 0.0 )
+				sum += w.x * w.y * texelFetch( Source, min( t, SourceSize - 1 ), 0 );
+		}
+	fragColor = sum / ( scale.x * scale.y );
 }
 )";
 
@@ -122,25 +136,33 @@ void main()
 )";
 
 //---------------------------------------------------------------------------
-// 4. One box mip level of one store layer, averaged in linear light.
+// 4. One mip level of one store layer, as the live texture's, averaged in
+// linear light.
 //---------------------------------------------------------------------------
 const char* const kMipLayerFragment = R"(
 uniform sampler2DArray Source;
 uniform int Layer;
 uniform ivec2 SourceSize;
+uniform ivec2 TargetSize;
 
 out vec4 fragColor;
 
-vec3 fetch( ivec2 p )
-{
-	return toLinear( texelFetch( Source, ivec3( min( p, SourceSize - 1 ), Layer ), 0 ).rgb );
-}
-
 void main()
 {
-	ivec2 p   = 2 * ivec2( gl_FragCoord.xy );
-	vec3 lin  = 0.25 * ( fetch( p ) + fetch( p + ivec2( 1, 0 ) ) + fetch( p + ivec2( 0, 1 ) ) + fetch( p + ivec2( 1, 1 ) ) );
-	fragColor = vec4( toCode( lin ), 1.0 );
+	ivec2 p    = ivec2( gl_FragCoord.xy );
+	vec2 scale = vec2( SourceSize ) / vec2( TargetSize );
+	vec2 lo    = vec2( p ) * scale;
+	vec2 hi    = lo + scale;
+	vec3 sum   = vec3( 0.0 );
+	for( int j = 0; j < 3; ++j )
+		for( int i = 0; i < 3; ++i )
+		{
+			ivec2 t = ivec2( floor( lo ) ) + ivec2( i, j );
+			vec2 w  = max( min( hi, vec2( t ) + 1.0 ) - max( lo, vec2( t ) ), vec2( 0.0 ) );
+			if( w.x * w.y > 0.0 )
+				sum += w.x * w.y * toLinear( texelFetch( Source, ivec3( min( t, SourceSize - 1 ), Layer ), 0 ).rgb );
+		}
+	fragColor = vec4( toCode( sum / ( scale.x * scale.y ) ), 1.0 );
 }
 )";
 
@@ -199,6 +221,7 @@ uniform float Throw;     // mm; 0 is no falloff
 uniform float Grain;
 uniform float Room;
 uniform float MixAmount;
+uniform int Prefilter;   // 1 when shipped; 0 lets a check see the bare taps
 
 in vec2 uv;
 out vec4 fragColor;
@@ -263,6 +286,19 @@ float filmBlur( float delta, float M )
 }
 
 //--- the card -----------------------------------------------------------------
+//How much of a footprint fp centred on p lies inside [ lo, hi ], per axis.
+//Written from the distances to each edge, never as min( p + fp/2, hi ) -
+//max( p - fp/2, lo ): at 75x a pixel is 0.005 mm of a card 148 mm across,
+//and that subtraction loses a tenth of a percent to float32 -- enough to let
+//the glass round the card glow through the whole picture.
+vec2 coverage( vec2 p, vec2 lo, vec2 hi, float fp )
+{
+	if( ( Hooks & 512 ) != 0 )
+		return clamp( ( min( p + 0.5 * fp, hi ) - max( p - 0.5 * fp, lo ) ) / fp, 0.0, 1.0 );
+	vec2 h = vec2( 0.5 * fp );
+	return clamp( ( min( h, hi - p ) + min( h, p - lo ) ) / fp, 0.0, 1.0 );
+}
+
 //The title, in square font pixels, box-filtered exactly by the footprint up
 //to a pixel and by the atlas's box mips beyond.
 float titleCover( vec2 p, float fp )
@@ -322,7 +358,7 @@ vec3 exposure( vec2 p, float fp )
 	vec2 pitch  = FrameSize + Gutter;
 	ivec2 cell  = clamp( ivec2( floor( ( p - GridOrigin + 0.5 * Gutter ) / pitch ) ), ivec2( 0 ), Grid - 1 );
 	vec2 local  = p - GridOrigin - vec2( cell ) * pitch;
-	vec2 cover  = clamp( ( min( local + 0.5 * fp, FrameSize ) - max( local - 0.5 * fp, vec2( 0.0 ) ) ) / fp, 0.0, 1.0 );
+	vec2 cover  = coverage( local, vec2( 0.0 ), FrameSize, fp );
 	float c     = cover.x * cover.y;
 	if( c > 0.0 )
 		e += c * frameContent( cell, clamp( local / FrameSize, 0.0, 1.0 ), fp );
@@ -362,7 +398,7 @@ float scratchCover( vec2 p, float fp )
 	float len       = 10.0 + 90.0 * unit( hash3( key, Seed, SALT_SCRATCH_L ) );
 	float w         = 0.004 + 0.010 * unit( hash3( key, Seed, SALT_SCRATCH_W ) );
 	float halfWidth = 0.5 * max( w, fp );
-	float along     = clamp( ( min( p.x + 0.5 * fp, x0 + len ) - max( p.x - 0.5 * fp, x0 ) ) / fp, 0.0, 1.0 );
+	float along     = coverage( p, vec2( x0, 0.0 ), vec2( x0 + len, 0.0 ), fp ).x;
 	return ( w / max( w, fp ) ) * along * clamp( ( halfWidth - abs( p.y - y ) ) / fp + 0.5, 0.0, 1.0 );
 }
 
@@ -371,7 +407,7 @@ float scratchCover( vec2 p, float fp )
 vec3 transmit( vec2 p, float fp, vec2 s )
 {
 	//Off the card there is only the carrier's glass: the lamp, straight through.
-	vec2 inside = clamp( ( min( p + 0.5 * fp, CardSize ) - max( p - 0.5 * fp, vec2( 0.0 ) ) ) / fp, 0.0, 1.0 );
+	vec2 inside = coverage( p, vec2( 0.0 ), CardSize, fp );
 	float onCard = inside.x * inside.y;
 	if( onCard <= 0.0 )
 		return vec3( 1.0 );
@@ -403,6 +439,16 @@ float grainAt( vec2 s )
 	return mix( mix( a, b, f.x ), mix( c, d, f.x ), f.y );
 }
 
+//j's lowest `bits` bits in reverse order: the Hammersley set's second axis.
+int reversed( int j, int bits )
+{
+	int r = 0;
+	for( int b = 0; b < 5; ++b )
+		if( b < bits )
+			r = ( r << 1 ) | ( ( j >> b ) & 1 );
+	return r;
+}
+
 void main()
 {
 	ivec2 px = clamp( ivec2( floor( uv * vec2( Size ) ) ), ivec2( 0 ), Size - 1 );
@@ -426,22 +472,33 @@ void main()
 	float rPx   = rMax * toPx;
 	float lPx   = pathMm * toPx;
 	float area  = 3.14159265 * rPx * rPx + 2.0 * rPx * lPx;
-	int n       = int( clamp( ceil( max( area / 4.0, lPx / 1.5 ) ), 1.0, float( MAX_TAPS ) ) );
-	float fp    = max( 1.0, max( sqrt( area / float( n ) ), lPx / float( n ) ) ) / toPx;
+	float want  = max( area / 4.0, lPx / 1.5 );
+	int n       = 1;
+	int bits    = 0;
+	for( int b = 0; b < 5; ++b )
+		if( float( n ) < want )
+		{
+			n *= 2;
+			++bits;
+		}
+	float spacing = Prefilter != 0 ? max( sqrt( area / float( n ) ), lPx / float( n ) ) : 0.0;
+	float fp      = max( 1.0, spacing ) / toPx;
 
-	//Each tap its own moment of the exposure (a golden-ratio sequence) and
-	//its own point of the aperture (a Vogel disc), through the card.
+	//The taps are a Hammersley set: tap j at moment ( j + 0.5 ) / n of the
+	//exposure, and at point reversed( j ) of a Vogel disc on the aperture, so
+	//time and aperture are each evenly covered and the two do not move
+	//together. Each goes through the card.
 	vec3 sum = vec3( 0.0 );
 	for( int j = 0; j < MAX_TAPS; ++j )
 	{
 		if( j >= n )
 			break;
-		float u      = n == 1 ? 1.0 : fract( 0.5 + float( j ) * 0.6180339887 );
-		vec4 st      = stateAt( u );
+		int a        = reversed( j, bits );
+		vec4 st      = stateAt( ( float( j ) + 0.5 ) / float( n ) );
 		vec2 f       = filmPoint( s, st );
 		float r      = filmBlur( defocusAt( f, st ), st.z );
-		float radial = ( Hooks & 2 ) != 0 ? ( float( j ) + 0.5 ) / float( n ) : sqrt( ( float( j ) + 0.5 ) / float( n ) );
-		sum += transmit( f + r * radial * Disc[ j ], fp, s );
+		float radial = ( Hooks & 2 ) != 0 ? ( float( a ) + 0.5 ) / float( n ) : sqrt( ( float( a ) + 0.5 ) / float( n ) );
+		sum += transmit( f + r * radial * Disc[ a ], fp, s );
 	}
 	vec3 T = sum / float( n );
 	if( ( Hooks & 256 ) != 0 )

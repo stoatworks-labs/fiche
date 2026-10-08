@@ -165,6 +165,8 @@ void Hand::planPan( double at, Tag tag, double tx, double ty, const Settings& s,
 	seg.by        = std::clamp( ay + uy * along + ux * across, 0.0, card.height );
 	seg.aim       = distance;
 	seg.tolerance = width;
+	seg.tx        = tx;
+	seg.ty        = ty;
 	push( seg );
 }
 
@@ -313,8 +315,9 @@ void Hand::decide( double at, const Settings& s, const reader::Card& card, const
 		}
 		else
 		{
-			const double u = uniform();
-			next = count > 1 ? current + 1 + std::min( static_cast< int >( u * ( count - 1 ) ), count - 2 ) : current;
+			const double u   = uniform();
+			const int others = ( hooks & kHookBiasedSearch ) ? std::max( 1, ( count - 1 ) / 2 ) : count - 1;
+			next = count > 1 ? current + 1 + std::min( static_cast< int >( u * others ), others - 1 ) : current;
 		}
 		current = count > 0 ? next % count : 0;
 		targetX = views[ static_cast< size_t >( current ) ].x;
@@ -438,6 +441,18 @@ void Hand::advanceGrip( double h, double x0, double y0, double x1, double y1, co
 	};
 	axis( cx, cvx, x0, x1 );
 	axis( cy, cvy, y0, y1 );
+	// The carriage's end stops: it cannot travel past the card, and a stop
+	// takes the speed out of it (inelastically).
+	if( cx < 0.0 || cx > travelW )
+	{
+		cx  = std::clamp( cx, 0.0, travelW );
+		cvx = 0.0;
+	}
+	if( cy < 0.0 || cy > travelH )
+	{
+		cy  = std::clamp( cy, 0.0, travelH );
+		cvy = 0.0;
+	}
 }
 
 void Hand::record()
@@ -447,8 +462,10 @@ void Hand::record()
 	historyCount = std::min( historyCount + 1, kHistoryLength );
 }
 
-void Hand::Advance( double dt, const Settings& s, const reader::Card& card, const reader::Bow& bow, bool jump, bool cue )
+void Hand::Advance( double dt, const Settings& s, const reader::Card& card, const reader::Bow& bow, bool jump, bool cue, double cueOffset )
 {
+	travelW = card.width;
+	travelH = card.height;
 	if( !started || s.seed != seed || card != viewsCard )
 		Reset( s, card, bow );
 	if( s.readZoom != viewsZoom || s.screenW != viewsW || s.screenH != viewsH )
@@ -457,6 +474,7 @@ void Hand::Advance( double dt, const Settings& s, const reader::Card& card, cons
 	frameStart = t;
 	pendingJump = pendingJump || jump;
 	pendingCue  = cue;
+	cueAt       = t + std::clamp( cueOffset, 0.0, std::max( dt, 0.0 ) );
 
 	if( s.manual != manualMode )
 	{
@@ -492,17 +510,28 @@ void Hand::Advance( double dt, const Settings& s, const reader::Card& card, cons
 			Segment& seg = queue.front();
 			if( seg.tag == Tag::Dwell )
 			{
+				const double was = seg.T;
 				if( pendingJump )
 				{
 					seg.T        = std::max( frameStart, seg.t0 ) - seg.t0;
 					seg.untilCue = false;
 					pendingJump  = false;
 				}
-				else if( seg.untilCue && pendingCue && frameStart - seg.t0 >= kMinSyncDwell )
+				else if( seg.untilCue && pendingCue && cueAt - seg.t0 >= kMinSyncDwell && cueAt <= t1 )
 				{
-					seg.T        = frameStart - seg.t0;
+					seg.T        = cueAt - seg.t0;
 					seg.untilCue = false;
+					pendingCue   = false;
 				}
+				// The log keeps a copy taken when the dwell began: tell it how
+				// the dwell ended.
+				if( logging && seg.T != was )
+					for( size_t k = log.size(); k-- > 0; )
+						if( log[ k ].tag == Tag::Dwell && log[ k ].t0 == seg.t0 )
+						{
+							log[ k ] = seg;
+							break;
+						}
 			}
 			if( seg.End() <= t1 )
 			{
@@ -563,6 +592,8 @@ void Hand::Advance( double dt, const Settings& s, const reader::Card& card, cons
 //---------------------------------------------------------------------------
 State Hand::Now() const
 {
+	if( historyCount == 0 )
+		return State {};
 	return history[ static_cast< size_t >( ( historyHead + kHistoryLength - 1 ) % kHistoryLength ) ].s;
 }
 

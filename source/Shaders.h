@@ -66,7 +66,9 @@ enum Hook : int
 	kHookNoNegative   = 1 << 5,///< a negative stock printed positive
 	kHookBowFlip      = 1 << 6,///< the bow read with the wrong sign
 	kHookColumnOrder  = 1 << 7,///< the step-and-repeat camera fills columns first
-	kHookDustOnScreen = 1 << 8 ///< dust that stays on the screen
+	kHookDustOnScreen = 1 << 8,///< dust that stays on the screen
+	kHookNaiveCover   = 1 << 9,///< box coverage as min - max of absolute card positions: cancels in float32
+	kHookPlainBox     = 1 << 10///< the clip's mips a plain 2 x 2 box, dropping an odd last row
 };
 
 } // namespace fiche::shaders

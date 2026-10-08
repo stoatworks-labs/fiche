@@ -67,6 +67,11 @@ public:
 	void SetResizeKeepsStoreForTest( bool keep );
 	/// Log every segment and hunt the hand plans.
 	void SetHandLoggingForTest( bool on );
+	/// Off, each tap samples the card at a single pixel's footprint: the
+	/// defocus and shutter checks measure the taps' geometry bare.
+	void SetPrefilterForTest( bool on );
+	/// A beat starts an act at the start of the frame it fell in.
+	void SetCueAtFrameStartForTest( bool on );
 
 	const fiche::hand::Hand& HandForTest() const
 	{
@@ -92,6 +97,14 @@ public:
 	int StoreWidthForTest() const
 	{
 		return storeW;
+	}
+	GLuint LiveTextureForTest() const
+	{
+		return liveTexture;
+	}
+	int LiveLevelsForTest() const
+	{
+		return liveLevels;
 	}
 	const fiche::hand::Settings& SettingsForTest() const
 	{
@@ -151,7 +164,7 @@ private:
 	std::string title;
 	bool jumpPressed  = false;
 	bool jumpHeld     = false;
-	int lastCueIndex  = -1;
+	double lastPhase   = -1.0;
 	float lastBarPhase = -1.0f;
 	bool hostBeatSeen = false;
 
@@ -171,6 +184,8 @@ private:
 	bool showHand          = false;
 	double shutterScale    = 1.0;
 	bool resizeKeepsStore  = false;
+	bool prefilter         = true;
+	bool cueAtFrameStart   = false;
 
 	/// Zero-initialised: the About block's ids are never stored to, so
 	/// without this GetFloatParameter hands the host whatever was on the

@@ -403,6 +403,7 @@ void Fiche::exposeFrame( int layer )
 		glFramebufferTextureLayer( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, storeTexture, level, layer );
 		glViewport( 0, 0, std::max( 1, storeW >> level ), std::max( 1, storeH >> level ) );
 		setInt2( mipLayerShader, "SourceSize", std::max( 1, storeW >> ( level - 1 ) ), std::max( 1, storeH >> ( level - 1 ) ) );
+		setInt2( mipLayerShader, "TargetSize", std::max( 1, storeW >> level ), std::max( 1, storeH >> level ) );
 		quad.Draw();
 	}
 	glTexParameteri( GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BASE_LEVEL, 0 );
@@ -506,27 +507,32 @@ FFResult Fiche::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 
 	// The beat. Resolume calls SetBeatInfo every frame; a host that never
 	// does gets a 120 BPM clock of the plugin's own, so Sync is never dead.
-	bool cue = false;
+	// The cue is placed where the beat fell INSIDE the frame, by the bar
+	// phase interpolated between this frame and the last, so an act starts on
+	// the beat and not on the frame after it.
+	bool cue         = false;
+	double cueOffset = 0.0;
 	if( barPhase != lastBarPhase && lastBarPhase >= 0.0f )
 		hostBeatSeen = true;
 	lastBarPhase = barPhase;
-	if( sync != Sync::Free )
+	const double tempo    = bpm > 1.0f ? static_cast< double >( bpm ) : 120.0;
+	const double phaseNow = hostBeatSeen ? std::clamp( static_cast< double >( barPhase ), 0.0, 1.0 ) : std::fmod( now * tempo / 240.0, 1.0 );
+	if( sync != Sync::Free && lastPhase >= 0.0 && dt > 0.0 )
 	{
-		const int division = sync == Sync::Beat ? 1 : sync == Sync::TwoBeats ? 2 : 4;
-		double phase       = std::clamp( static_cast< double >( barPhase ), 0.0, 1.0 );
-		if( !hostBeatSeen )
+		const double step = ( sync == Sync::Beat ? 1.0 : sync == Sync::TwoBeats ? 2.0 : 4.0 ) / 4.0;
+		double p0 = lastPhase, p1 = phaseNow;
+		if( p1 < p0 )
+			p1 += 1.0;
+		const double boundary = ( std::floor( p0 / step + 1e-9 ) + 1.0 ) * step;
+		if( p1 > p0 && boundary <= p1 )
 		{
-			const double tempo = bpm > 1.0f ? static_cast< double >( bpm ) : 120.0;
-			phase              = std::fmod( now * tempo / 240.0, 1.0 );
+			cue       = true;
+			cueOffset = cueAtFrameStart ? 0.0 : dt * ( boundary - p0 ) / ( p1 - p0 );
 		}
-		const int index = std::min( static_cast< int >( std::floor( phase * 4.0 / division ) ), 4 / division - 1 );
-		cue             = lastCueIndex >= 0 && index != lastCueIndex;
-		lastCueIndex    = index;
 	}
-	else
-		lastCueIndex = -1;
+	lastPhase = phaseNow;
 
-	hand.Advance( dt, settings, card, bow, jumpPressed, cue );
+	hand.Advance( dt, settings, card, bow, jumpPressed, cue, cueOffset );
 	jumpPressed = false;
 
 	constexpr int kStates = shaders::kMaxStates;
@@ -559,6 +565,7 @@ FFResult Fiche::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 		ScopedShaderBinding shader( mipShader.GetGLID() );
 		bindUnit( 0, liveTexture );
 		mipShader.Set( "Source", 0 );
+		mipShader.Set( "Hooks", hooks );
 		for( int level = 1; level <= liveLevels; ++level )
 		{
 			glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, level - 1 );
@@ -566,6 +573,7 @@ FFResult Fiche::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 			glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, liveTexture, level );
 			glViewport( 0, 0, std::max( 1, width >> level ), std::max( 1, height >> level ) );
 			setInt2( mipShader, "SourceSize", std::max( 1, width >> ( level - 1 ) ), std::max( 1, height >> ( level - 1 ) ) );
+			setInt2( mipShader, "TargetSize", std::max( 1, width >> level ), std::max( 1, height >> level ) );
 			quad.Draw();
 		}
 		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0 );
@@ -692,6 +700,7 @@ FFResult Fiche::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 		s.Set( "Grain", static_cast< float >( GrainFromParam( params[ PT_SCREEN_GRAIN ] ) ) );
 		s.Set( "Room", static_cast< float >( RoomFromParam( params[ PT_ROOM_LIGHT ] ) ) );
 		s.Set( "MixAmount", std::clamp( params[ PT_MIX ], 0.0f, 1.0f ) );
+		s.Set( "Prefilter", prefilter ? 1 : 0 );
 		quad.Draw();
 
 		glActiveTexture( GL_TEXTURE1 );
@@ -807,4 +816,12 @@ void Fiche::SetResizeKeepsStoreForTest( bool keep )
 void Fiche::SetHandLoggingForTest( bool on )
 {
 	hand.SetLogging( on );
+}
+void Fiche::SetPrefilterForTest( bool on )
+{
+	prefilter = on;
+}
+void Fiche::SetCueAtFrameStartForTest( bool on )
+{
+	cueAtFrameStart = on;
 }
