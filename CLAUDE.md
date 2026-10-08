@@ -100,8 +100,7 @@ table (`Controls.cpp`).
 
 ## Not done yet
 - Never loaded into Resolume, on either platform; Windows never built.
-- No OpenFX port, no browser demo, no user guide.
-- Not registered, not public: a local v0.1.0 in `~/dev/fiche`.
+- No OpenFX port, no browser demo.
 
 ## Diagnostics
 

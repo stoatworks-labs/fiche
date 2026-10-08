@@ -3,9 +3,8 @@
 Fiche is built on other people's work. This file lists what that work is, who did
 it, and what it is doing here.
 
-This copy is PROVISIONAL, written by hand on 2026-10-08 in the shape the
-`stoatworks-backend` repo's `scripts/sync-attributions.py` generates. Registration
-replaces it with that script's output; then edit the master lists there, not here.
+It is generated — the master lists live in the `stoatworks-backend` repo and are
+pushed out by `scripts/sync-attributions.py`. Edit it there, not here.
 
 ## Code we derived from other people's work
 
@@ -29,7 +28,7 @@ Libraries, SDKs and frameworks the project is built on or bundles.
 Licence: BSD-3-Clause  
 Copyright: FreeFrame
 
-Vendored as a git submodule at external/ffgl.
+Vendored as a git submodule at external/ffgl (third_party/ffgl in oxbow).
 
 The plugin ABI itself. An FFGL effect or source is defined by this SDK's headers — there is no other way to be loadable by Resolume Arena and Avenue.
 
@@ -65,7 +64,7 @@ The A6 card with its eye-readable header and a grid of frames (the 14 × 7 compu
 
 What the implementation is measured against.
 
-- **Paul M. Fitts, "The information capacity of the human motor system in controlling the amplitude of movement" (1954)**, in Shannon's form (MacKenzie 1992) — every pan's duration, a + b log2( D / W + 1 ).
+- **Paul M. Fitts, "The information capacity of the human motor system in controlling the amplitude of movement" (1954)** — in Shannon's form (MacKenzie 1992): every pan's duration, a + b log2( D / W + 1 ).
 - **Tamar Flash and Neville Hogan, "The coordination of arm movements" (1985)** — the minimum-jerk profile of every submovement, and its 1.875 D / T peak.
 - **Christopher M. Harris and Daniel M. Wolpert, "Signal-dependent noise determines motor planning" (1998)** — endpoint scatter proportional to the distance moved.
 - **Digby Elliott, Werner F. Helsen and Romeo Chua, "A century later: Woodworth's (1899) two-component model of goal-directed aiming" (2001)** — primary submovements that undershoot, and the corrections after them.
