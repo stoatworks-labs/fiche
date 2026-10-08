@@ -752,6 +752,114 @@ int runPipe( int width, int height, double fps, const std::string& scriptPath, i
 }
 
 //===========================================================================
+// --expect: a draft of the fleet Arena gate's expectation, from what the
+// plugin really declares. Defaults are the floats the constructor sets, never
+// rounded literals (containment's trap). The gate compares single frames of a
+// STILL carrier, and an Auto operator moves the picture between any two
+// grabs, so every row holds the operator in Manual unless the control steers
+// the operator itself -- and those are expected inconclusive.
+//===========================================================================
+struct GateRow
+{
+	const char* name;
+	const char* needs;///< JSON object body, without the braces, beyond Operator Manual; nullptr for the operator's own
+	const char* probe;///< JSON array body, or nullptr for the gate's own
+	const char* note;
+};
+const char* const kSteers = "steers the operator, whose acts play out over seconds: a single grab of a moving reader may read inconclusive";
+const GateRow kGateRows[] = {
+	{ "Operator", "", nullptr, "Auto moves the picture between grabs" },
+	{ "Browse", nullptr, nullptr, kSteers },
+	{ "Dwell", nullptr, nullptr, kSteers },
+	{ "Sync", nullptr, nullptr, kSteers },
+	{ "Hand Speed", nullptr, nullptr, kSteers },
+	{ "Accuracy", nullptr, nullptr, kSteers },
+	{ "Crash Zoom", nullptr, nullptr, kSteers },
+	{ "Focus Skill", nullptr, nullptr, kSteers },
+	{ "Carriage Play", nullptr, nullptr, kSteers },
+	{ "Parfocal", nullptr, nullptr, "acts through the operator's zooms: Manual's Focus is measured from best focus, so only Auto shows it" },
+	{ "Shutter", nullptr, nullptr, "acts only on a moving carriage: inconclusive on a still reader" },
+	{ "Columns", "\"Zoom\": 0.0", nullptr, nullptr },
+	{ "Rows", "\"Zoom\": 0.0", nullptr, nullptr },
+	{ "Gutter", "\"Zoom\": 0.3", nullptr, nullptr },
+	{ "Interval", "\"Content\": \"Filmed\", \"Zoom\": 0.0", nullptr, "the camera fills the card a frame per Interval: acts over seconds" },
+	{ "Flatness", "\"Zoom\": 0.3, \"Aperture\": 0.0", nullptr, nullptr },
+	{ "Dust", "\"Zoom\": 0.85", nullptr, nullptr },
+	{ "Scratches", "\"Zoom\": 0.3", nullptr, nullptr },
+	{ "Aperture", "\"Focus\": 0.8", nullptr, nullptr },
+	{ "Seed", "\"Dust\": 1.0, \"Zoom\": 0.85", "1, 2", nullptr },
+};
+
+int runExpect()
+{
+	Fiche plugin;
+	auto escape = []( const std::string& s ) {
+		std::string out;
+		for( char c : s )
+		{
+			if( std::isalnum( static_cast< unsigned char >( c ) ) )
+				out += c;
+			else
+				out += std::string( "\\\\" ) + c;
+		}
+		return out;
+	};
+	std::printf( "{\n  \"plugin\": \"fiche\",\n  \"dlls\": [\"Fiche.dll\"],\n"
+	             "  \"register\": [\n    {\"name\": \"SW Fiche\", \"uid\": \"MF01\", \"kind\": \"effect\"}\n  ],\n"
+	             "  \"params\": {\n    \"SW Fiche\": [\n" );
+	//Arena's own first: Opacity, held where the effect is plainly not the input.
+	std::printf( "      {\"name\": \"Opacity\", \"type\": \"ParamRange\", \"min\": 0.0, \"max\": 1.0, \"default\": 1.0, "
+	             "\"needs\": {\"Operator\": \"Manual\", \"Film\": \"Silver Negative\"}},\n" );
+	const std::vector< NamedParameter > list = listParameters( plugin );
+	for( size_t i = 0; i < list.size(); ++i )
+	{
+		const NamedParameter& p = list[ i ];
+		std::string line        = "      {\"name\": \"" + p.name + "\", ";
+		if( p.type == FF_TYPE_OPTION )
+			line += "\"type\": \"ParamChoice\", \"default\": \"" + std::string( plugin.GetParamElementName( p.index, static_cast< unsigned int >( std::lround( p.value ) ) ) ) + "\"";
+		else if( p.type == FF_TYPE_EVENT )
+			line += "\"type\": \"ParamEvent\"";
+		else if( p.type == FF_TYPE_TEXT && p.index == PT_TITLE )
+			line += "\"type\": \"ParamString\", \"default\": \"" + std::string( kDefaultTitle ) + "\"";
+		else if( p.type == FF_TYPE_TEXT )
+			line += "\"type\": \"ParamString\", \"default_pattern\": \"^" + escape( "Fiche v" ) + "{version}" + escape( " - MIT - Stoatworks Labs, stoatworks-labs.com" ) + "$\"";
+		else
+		{
+			const float lo = p.type == FF_TYPE_INTEGER ? plugin.GetParamRange( p.index ).min : 0.0f;
+			const float hi = p.type == FF_TYPE_INTEGER ? plugin.GetParamRange( p.index ).max : 1.0f;
+			line += fmt( "\"type\": \"ParamRange\", \"min\": %.1f, \"max\": %.1f, \"default\": %.17g", lo, hi, static_cast< double >( p.value ) );
+		}
+		if( p.name.size() == 16 )
+			line += ", \"declared\": \"" + p.name + "\"";
+		const bool control = p.type != FF_TYPE_EVENT && p.type != FF_TYPE_TEXT;
+		const GateRow* row = nullptr;
+		for( const GateRow& r : kGateRows )
+			if( p.name == r.name )
+				row = &r;
+		if( control )
+		{
+			std::string needs;
+			if( row && row->needs == nullptr )
+				needs = "\"Operator\": \"Auto\"";
+			else if( !( row && p.name == "Operator" ) )
+				needs = "\"Operator\": \"Manual\"";
+			if( row && row->needs && *row->needs )
+				needs += ( needs.empty() ? "" : ", " ) + std::string( row->needs );
+			if( !needs.empty() )
+				line += ", \"needs\": {" + needs + "}";
+			if( row && row->probe )
+				line += ", \"probe\": [" + std::string( row->probe ) + "]";
+			if( row && row->note )
+				line += ", \"note\": \"" + std::string( row->note ) + "\"";
+		}
+		line += i + 1 < list.size() ? "},\n" : "}\n";
+		std::printf( "%s", line.c_str() );
+	}
+	std::printf( "    ]\n  }\n}\n" );
+	return 0;
+}
+
+//===========================================================================
 // The checks.
 //
 // Each takes a Perturb. With every field at its default the check scores the
@@ -2731,7 +2839,8 @@ int main( int argc, char** argv )
 			             "  --list            every parameter and its default\n"
 			             "  --pipe            raw RGBA frames in on stdin, out on stdout\n"
 			             "  --film N          N frames of the card, raw RGBA on stdout\n"
-			             "  --script PATH     cues for --pipe/--film: 'frame Name value'\n\n"
+			             "  --script PATH     cues for --pipe/--film: 'frame Name value'\n"
+			             "  --expect          a draft of the fleet Arena gate's expectation\n\n"
 			             "  --trace           (with --frames) the hand's segments and state, frame by frame\n\n"
 			             "  checks: --identity --mips --dark --magnify --defocus --field --track --carriage --shutter --hunt --stock --screen\n"
 			             "          --filmed --sync --resize --state\n"
@@ -2791,6 +2900,8 @@ int main( int argc, char** argv )
 	if( sizeGiven )
 		kRasters = { { width, height } };
 
+	if( mode == "expect" )
+		return runExpect();
 	if( mode == "list" )
 	{
 		Fiche plugin;
