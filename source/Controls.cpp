@@ -38,7 +38,7 @@ constexpr double kMaxDefocus = 1.0;
 constexpr double kMaxGutter = 3.0;
 constexpr double kIntervalLow = 0.05, kIntervalHigh = 10.0;
 constexpr double kMaxBow = 0.5;
-constexpr double kMaxDust = 40.0;
+constexpr double kMaxDust = 150.0;
 constexpr double kMaxScratch = 0.6;
 constexpr double kApertureLow = 2.0, kApertureHigh = 16.0;
 constexpr double kMaxParfocal = 1.0;

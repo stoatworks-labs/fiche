@@ -178,7 +178,8 @@ float ParamFromInterval( double seconds );
 /// Flatness: the largest bow of the card between its glass plates, 0 to 0.5 mm.
 double FlatnessFromParam( float v );
 float ParamFromFlatness( double mm );
-/// Dust: particles per square centimetre of card, 0 to 40, square law.
+/// Dust: particles per square centimetre of card, 0 to 150, square law (a
+/// card handled for years in a reading room is at the top of it).
 double DustFromParam( float v );
 /// Scratches: the chance that a 2 mm band of the card carries a scratch, 0 to 0.6.
 double ScratchFromParam( float v );
