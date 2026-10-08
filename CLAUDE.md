@@ -95,8 +95,10 @@ table (`Controls.cpp`).
   identifiers. No `M_PI`, no `far`/`near`.
 - `fiche_core` is an OBJECT library: the registration is a file-scope constructor
   nothing references.
-- `StoatworksAbout.h` and `ATTRIBUTIONS.md` are PROVISIONAL hand copies until the
-  repo is registered; then sync-about.py and sync-attributions.py own them.
+- **Generated, do not edit:** `source/StoatworksAbout*.h` (stoatworks-backend's
+  `scripts/sync-about.py`), `ATTRIBUTIONS.md` (`scripts/sync-attributions.py`), the
+  README's attributions block, and `docs/USER-GUIDE.pdf` (the website's
+  `build_guides.py fiche`, from `docs/USER-GUIDE.md`, the only copy anyone edits).
 
 ## Not done yet
 - Never loaded into Resolume, on either platform; Windows never built.
