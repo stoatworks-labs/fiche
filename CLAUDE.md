@@ -100,10 +100,24 @@ table (`Controls.cpp`).
   README's attributions block, and `docs/USER-GUIDE.pdf` (the website's
   `build_guides.py fiche`, from `docs/USER-GUIDE.md`, the only copy anyone edits).
 
+## Browser demo
+- `demo/` is https://fiche-demo.stoatworks-labs.com (Cloudflare Worker `fiche-demo`, a
+  ROUTE on a proxied AAAA 100:: record -- the zone's custom domains are full; deleting
+  the record takes the page dark with a green deploy). `deploy.yml` redeploys it on a
+  push to main; by hand: `cf-run npx wrangler deploy`.
+- It runs the plugin's C++ as WebAssembly, COMMITTED (`demo/fiche-core.{js,wasm}`):
+  after changing anything in `source/`, rerun `demo/tools/build-wasm.sh` (needs
+  emscripten, `em++`); verify.sh fails until you do (`demo/wasm/inputs.sha256`).
+- `demo/shaders.js` is GENERATED, pieces and `ASSEMBLY` order both: after changing
+  `source/Shaders.cpp` run `python3 demo/tools/check_shaders.py --write`.
+- `demo/wasm/glue.cpp` is the host; `demo/wasm/gl_shim.cpp` is what WebGL2 needs
+  translated (see AGENTS.md). `demo/vendor/` is the shared kit: never edit it,
+  re-vendor with `stoatworks-backend/resolume-demo/sync.sh`.
+
 ## Not done yet
 - Never loaded into Resolume on macOS. On Windows only the fleet's Arena gate
   (9/9 on Arena 7.27.1, llvmpipe, 2026-10-09).
-- No OpenFX port, no browser demo.
+- No OpenFX port.
 
 ## Diagnostics
 

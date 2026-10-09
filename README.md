@@ -249,6 +249,21 @@ ffmpeg -i in.mov -vf fps=60 -f rawvideo -pix_fmt rgba -s 1920x1080 - \
 See [`CLAUDE.md`](CLAUDE.md) for the full command reference and
 [`AGENTS.md`](AGENTS.md) for the model and the traps.
 
+## Browser demo
+
+**<https://fiche-demo.stoatworks-labs.com/>** runs the plugin itself, not a port of it:
+`source/Fiche.cpp` and everything it calls — the hand, the reader, the title font, the
+parameter table — with the FFGL SDK classes it uses, compiled unmodified to WebAssembly
+by `demo/tools/build-wasm.sh` (emscripten) and drawing with its own GLSL in WebGL2. The
+panel is read back from the plugin's own declarations. The page is the host: it sends
+no beat (Sync keeps the plugin's own 120 BPM), its clock is the browser's, the clip is
+generated in the page, and six GL entry points are translated for WebGL2
+(`demo/wasm/gl_shim.cpp`). Compared once with `mftest --pipe` on the same frames, in
+Manual, over ten seconds of the Auto operator and on the filmed card, it agreed to one
+level in all but one pixel. `tools/verify.sh` fails if `demo/shaders.js` or any input of
+the `.wasm` has drifted from `source/`. It is a demo, not the plugin; the page lists
+everything it does not reproduce.
+
 <!-- attributions:start -->
 This project is built on other people's work — see [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
 <!-- attributions:end -->

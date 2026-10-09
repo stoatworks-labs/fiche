@@ -288,6 +288,7 @@ the plugin ships, not a copy.
     tools/
       mftest/main.cpp     the harness: render, --pipe/--film/--script/--trace, every check
       verify.sh           everything; mutate.sh, sweep.py, glslc.sh
+    demo/                 the browser demo: this C++ as WebAssembly (glue.cpp, gl_shim.cpp), vendor/ (the kit)
 
 ## What is genuinely verified, and what is assumed
 
@@ -319,6 +320,71 @@ of 32 controls moved its picture, 31 under a precondition, none dead, and the si
 steer the operator over seconds (Hand Speed, Accuracy, Crash Zoom, Focus Skill,
 Carriage Play, Parfocal) were inconclusive on single grabs of a moving reader, as the
 expectation's notes say. No OpenFX port and no browser demo.
+
+## The browser demo (2026-10-09)
+
+`demo/` is <https://fiche-demo.stoatworks-labs.com>, built to the fleet's
+`resolume-demo` kit rules by a sub-agent of the release session, polyhedral's way: it
+**runs the plugin rather than a port of it**.
+
+- **`fiche-core.wasm` is the plugin's C++, unmodified**: Fiche.cpp, Hand, Reader, Font,
+  Controls, Shaders and Diag, with the SDK's CFFGLPluginManager / CFFGLPlugin,
+  CFFGLPluginInfo, FFGLLog, FFGLShader, FFGLScreenQuad and scoped bindings. Left out:
+  PluginEntry.cpp (the build stamp) and FFGL.cpp (plugMain). `-D__linux__` goes to the
+  files that include the SDK only (FFGLPlatform.h). Committed, with
+  `demo/wasm/inputs.sha256` pinning every input; rebuild with `demo/tools/build-wasm.sh`.
+- **The host** (`demo/wasm/glue.cpp`) constructs the plugin, reads its 38 declarations
+  back through the SDK's host getters (the panel, About block included, is built from
+  them) and forwards SetFloatParameter, SetTextParameter, SetTime and ProcessOpenGL as
+  mftest's Rig does; never SetBeatInfo. `FICHE_LOG_DIR` must be set before the FIRST
+  constructor: Diag opens its log there.
+- **The shim** (`demo/wasm/gl_shim.cpp`), six entry points. glShaderSource: the text must
+  equal one of the page's assemblies of `shaders.js`, then the kit's `port()`.
+  glEnable / glDisable / glIsEnabled: GL_PROGRAM_POINT_SIZE (GLState.h) is not in
+  WebGL2. glTexImage2D / 3D: (a) a level-0 allocation with no data becomes glTexStorage
+  of the full chain, and the plugin's own later level allocations are checked against
+  it and skipped; (b) the bow's R32F becomes R16F, only without
+  OES_texture_float_linear (the status line says which the browser got).
+- **(a) is a portability fact about the plugin, not a bug in it.** The mip passes render
+  into level L of the live texture and of the store while BASE = MAX = L - 1. GL 4.1
+  allows that for any texture; ES 3.0 (4.4.4.1), so WebGL2, makes a level of a MUTABLE
+  texture (glTexImage per level) framebuffer-complete only inside [BASE, MAX]. Every mip
+  draw failed with INVALID_FRAMEBUFFER_OPERATION, the levels stayed black, and at 24x
+  (LOD about 0.4) the page was 0.6 times as bright as mftest. Immutable storage is
+  exempt. Allocating with glTexStorage (GL 4.2, or ARB_texture_storage) would make the
+  plugin itself portable to ES; it was not changed.
+- **Checked**: `demo/tools/check_shaders.py` (verify.sh) holds the 7 pieces, kVersion and
+  Assemble()'s order to the C++, and every input of the .wasm to its manifest. 10 of 10
+  negative controls caught: M + 1 to M - 1 in shaders.js; the bow's sign in Shaders.cpp
+  only; an extra export; ASSEMBLY.screen without COMMON; a new piece; a character of
+  Hand.cpp; a default in Controls.cpp; a new header; a character of glue.cpp; a byte of
+  the .wasm. At run time a shaders.js with one space added to a comment was refused.
+- **Compared once with mftest** (M4 Max; headless Chrome on ANGLE/Metal; 640 x 360; the
+  page's frames gated, the first at t = 0 then one Step of 1/60 s each, with
+  performance.now() advanced by the same 1/60 s so the plugin's pre-vote wall clock
+  agreed; the clip frames from the page at Mix 0 through `mftest --pipe`). Manual at 24x,
+  40 frames: worst 1 level, 291 of 9.2 M pixels differing. Over the header at 2.5x on
+  Diazo Blue with a typed Title: worst 1, 131. 0.6 mm out of focus on Colour: worst 1,
+  106. Auto, Seed 1, 240 frames: worst 1, 829 of 55 M. Auto, Seed 7, 600 frames of pans,
+  corrections, crash zooms and hunts: worst 8 in ONE pixel of one frame (a title glyph's
+  edge mid crash-zoom), 4,643 of 138 M by one. Filmed, a 4 x 3 card at 2.9x, Interval
+  0.073 s, 120 frames: worst 1, 562 of 28 M. On SwiftShader, and with the bow forced to
+  R16F, Manual stayed within 1. The comparer fails: Seed 2 differs in 16% of pixels,
+  Position Y 0.03 mm away in 34%, the Auto run one frame out of step in 12%; and before
+  (a) the Manual case was worst 46, 83% of pixels.
+- **Seen, not a fault**: at an Interval of exactly three frames (0.05 s) Filmed differed on
+  18 of 120 frames, by up to 179 levels, each page frame k matching mftest's k + 1 or
+  k - 1. The camera's `filmClock >= interval` sits on the boundary and the kit's clock is
+  a running sum of 1/60 where mftest's is k / 60, so the last bit picks the frame. Any
+  host's clock does the same.
+- **Gaps, all said on the page**: no host beat (Sync keeps the plugin's own 120 BPM); the
+  browser's clock (Pause is no time passing, so no motion smear; Restart is a backward
+  jump); Title is sent on commit and the integers are number fields; the About buttons'
+  `std::system()` does nothing in a browser, so the page also opens the plugin's own
+  URLs; the filmed store (up to 256 MB) may be refused; the clip is unpadded; the shim.
+- **Console**: nothing locally, on Metal or SwiftShader. The live page logs one error that
+  is not the page's: the zone's injected `/cdn-cgi/challenge-platform` inline script,
+  refused by `script-src`, as on every `*-demo` host.
 
 ## Open design questions
 
