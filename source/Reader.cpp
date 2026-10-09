@@ -7,7 +7,15 @@
 
 namespace fiche::reader
 {
-Card MakeCard( int cols, int rows, double gutterMm, double aspect )
+double Wrap( double x, double period )
+{
+	if( !( period > 0.0 ) )
+		return x;
+	const double w = x - period * std::floor( x / period );
+	return w >= period ? 0.0 : w;
+}
+
+Card MakeCard( int cols, int rows, double gutterMm, double aspect, bool endless )
 {
 	Card card;
 	card.cols   = std::max( cols, 1 );
@@ -24,6 +32,14 @@ Card MakeCard( int cols, int rows, double gutterMm, double aspect )
 	card.gridX  = kMargin;
 	card.gridY  = kHeader + kMargin;
 	card.height = card.gridY + card.rows * card.frameH + ( card.rows - 1 ) * gutter + kMargin;
+	if( endless )
+	{
+		card.endless = true;
+		card.gridX   = 0.5 * gutter;
+		card.gridY   = 0.5 * gutter;
+		card.width   = card.cols * card.PitchX();
+		card.height  = card.rows * card.PitchY();
+	}
 	return card;
 }
 
@@ -71,8 +87,20 @@ void Bow::Build( const Card& card, double amplitudeMm, uint32_t seed )
 	amplitude = std::max( amplitudeMm, 0.0 );
 	width     = card.width;
 	height    = card.height;
-	nx        = static_cast< int >( std::ceil( width / kBowSpacing ) ) + 4;
-	ny        = static_cast< int >( std::ceil( height / kBowSpacing ) ) + 4;
+	periodic  = card.endless;
+	if( periodic )
+	{
+		nx       = std::max( 1, static_cast< int >( std::lround( width / kBowSpacing ) ) );
+		ny       = std::max( 1, static_cast< int >( std::lround( height / kBowSpacing ) ) );
+		spacingX = width / nx;
+		spacingY = height / ny;
+	}
+	else
+	{
+		nx       = static_cast< int >( std::ceil( width / kBowSpacing ) ) + 4;
+		ny       = static_cast< int >( std::ceil( height / kBowSpacing ) ) + 4;
+		spacingX = spacingY = kBowSpacing;
+	}
 	lattice.assign( static_cast< size_t >( nx ) * ny, 0.0 );
 	for( int j = 0; j < ny; ++j )
 		for( int i = 0; i < nx; ++i )
@@ -93,8 +121,10 @@ double Bow::At( double x, double y ) const
 {
 	if( nx == 0 || amplitude == 0.0 )
 		return 0.0;
-	const double u = std::clamp( x, 0.0, width ) / kBowSpacing + 1.0;
-	const double v = std::clamp( y, 0.0, height ) / kBowSpacing + 1.0;
+	// The card: clamped to it, the lattice one cell beyond each edge. The
+	// endless page: the tile's point, on a lattice that wraps round it.
+	const double u = periodic ? Wrap( x, width ) / spacingX : std::clamp( x, 0.0, width ) / kBowSpacing + 1.0;
+	const double v = periodic ? Wrap( y, height ) / spacingY : std::clamp( y, 0.0, height ) / kBowSpacing + 1.0;
 	const int i0 = static_cast< int >( std::floor( u ) ), j0 = static_cast< int >( std::floor( v ) );
 	double wu[ 4 ], wv[ 4 ];
 	bspline( u - i0, wu );
@@ -103,7 +133,8 @@ double Bow::At( double x, double y ) const
 	for( int b = 0; b < 4; ++b )
 		for( int a = 0; a < 4; ++a )
 		{
-			const int i = std::clamp( i0 - 1 + a, 0, nx - 1 ), j = std::clamp( j0 - 1 + b, 0, ny - 1 );
+			const int i = periodic ? ( ( i0 - 1 + a ) % nx + nx ) % nx : std::clamp( i0 - 1 + a, 0, nx - 1 );
+			const int j = periodic ? ( ( j0 - 1 + b ) % ny + ny ) % ny : std::clamp( j0 - 1 + b, 0, ny - 1 );
 			sum += wu[ a ] * wv[ b ] * lattice[ static_cast< size_t >( j ) * nx + i ];
 		}
 	return sum;

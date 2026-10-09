@@ -50,6 +50,7 @@ constexpr double kMaxRoom = 0.2;
 const char* const kOperatorNames[] = { "Auto", "Manual" };
 const char* const kBrowseNames[]   = { "Reading", "Skimming", "Searching", "Mixed" };
 const char* const kSyncNames[]     = { "Free", "Beat", "2 Beats", "Bar" };
+const char* const kLayoutNames[]   = { "Card", "Endless" };
 const char* const kContentNames[]  = { "Live", "Filmed" };
 const char* const kFilmNames[]     = { "Ideal", "Silver", "Silver Negative", "Diazo Blue", "Diazo Black", "Vesicular", "Colour" };
 
@@ -104,6 +105,7 @@ const ParamInfo& InfoOf( unsigned int id )
 		standard( PT_POSITION_Y, "Position Y", "View", 0.5f ),
 		standard( PT_FOCUS, "Focus", "View", 0.5f ),
 
+		option( PT_LAYOUT, "Layout", "Fiche", 0.0f, kLayoutNames, static_cast< int >( Layout::Count ) ),
 		integer( PT_COLUMNS, "Columns", "Fiche", 14.0f, 1.0f, 16.0f ),
 		integer( PT_ROWS, "Rows", "Fiche", 7.0f, 1.0f, 16.0f ),
 		standard( PT_GUTTER, "Gutter", "Fiche", ParamFromGutter( 0.8 ) ),

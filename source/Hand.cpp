@@ -106,6 +106,7 @@ void Hand::Reset( const Settings& s, const reader::Card& card, const reader::Bow
 	manualFromX = manualToX = hx;
 	manualFromY = manualToY = hy;
 	manualDt    = 0.0;
+	manualTileX = manualTileY = 0.0;
 
 	stage       = Stage::Focus;
 	lastEnd     = 0.0;
@@ -161,8 +162,13 @@ void Hand::planPan( double at, Tag tag, double tx, double ty, const Settings& s,
 	seg.T         = FittsTime( s, distance, width );
 	seg.ax        = ax;
 	seg.ay        = ay;
-	seg.bx        = std::clamp( ax + ux * along - uy * across, 0.0, card.width );
-	seg.by        = std::clamp( ay + uy * along + ux * across, 0.0, card.height );
+	seg.bx        = ax + ux * along - uy * across;
+	seg.by        = ay + uy * along + ux * across;
+	if( !card.endless )
+	{
+		seg.bx = std::clamp( seg.bx, 0.0, card.width );
+		seg.by = std::clamp( seg.by, 0.0, card.height );
+	}
 	seg.aim       = distance;
 	seg.tolerance = width;
 	seg.tx        = tx;
@@ -322,6 +328,14 @@ void Hand::decide( double at, const Settings& s, const reader::Card& card, const
 		current = count > 0 ? next % count : 0;
 		targetX = views[ static_cast< size_t >( current ) ].x;
 		targetY = views[ static_cast< size_t >( current ) ].y;
+		// On the endless page every view is there once per tile: go to the
+		// copy nearest the hand, so reading runs on to the right for ever and
+		// a search never crosses more than half a tile.
+		if( card.endless && !( hooks & kHookFarImage ) )
+		{
+			targetX += card.width * std::round( ( planned.x - targetX ) / card.width );
+			targetY += card.height * std::round( ( planned.y - targetY ) / card.height );
+		}
 
 		// Back to the reading magnification if Zoom has been moved.
 		const double readNoise = normal();
@@ -442,7 +456,9 @@ void Hand::advanceGrip( double h, double x0, double y0, double x1, double y1, co
 	axis( cx, cvx, x0, x1 );
 	axis( cy, cvy, y0, y1 );
 	// The carriage's end stops: it cannot travel past the card, and a stop
-	// takes the speed out of it (inelastically).
+	// takes the speed out of it (inelastically). The endless page has none.
+	if( !endStops )
+		return;
 	if( cx < 0.0 || cx > travelW )
 	{
 		cx  = std::clamp( cx, 0.0, travelW );
@@ -464,8 +480,9 @@ void Hand::record()
 
 void Hand::Advance( double dt, const Settings& s, const reader::Card& card, const reader::Bow& bow, bool jump, bool cue, double cueOffset )
 {
-	travelW = card.width;
-	travelH = card.height;
+	travelW  = card.width;
+	travelH  = card.height;
+	endStops = !card.endless;
 	if( !started || s.seed != seed || card != viewsCard )
 		Reset( s, card, bow );
 	if( s.readZoom != viewsZoom || s.screenW != viewsW || s.screenH != viewsH )
@@ -480,6 +497,12 @@ void Hand::Advance( double dt, const Settings& s, const reader::Card& card, cons
 	{
 		manualMode = s.manual;
 		queue.clear();
+		manualTileX = manualTileY = 0.0;
+		if( manualMode && card.endless )
+		{
+			manualTileX = card.width * std::round( ( hx - s.manualX ) / card.width );
+			manualTileY = card.height * std::round( ( hy - s.manualY ) / card.height );
+		}
 		if( !manualMode )
 		{
 			stage       = Stage::Focus;
@@ -492,8 +515,8 @@ void Hand::Advance( double dt, const Settings& s, const reader::Card& card, cons
 	{
 		manualFromX = hx;
 		manualFromY = hy;
-		manualToX   = s.manualX;
-		manualToY   = s.manualY;
+		manualToX   = s.manualX + manualTileX;
+		manualToY   = s.manualY + manualTileY;
 		manualDt    = dt;
 	}
 

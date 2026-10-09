@@ -173,7 +173,8 @@ enum HandHook : int
 	kHookFlatScatter  = 1 << 2,///< endpoint scatter that ignores the distance
 	kHookNoReaction   = 1 << 3,///< a hunt that turns at the band's edge, no reaction time
 	kHookEulerGrip    = 1 << 4,///< the carriage by forward Euler
-	kHookBiasedSearch = 1 << 5 ///< Searching only ever looks in the next half of the card
+	kHookBiasedSearch = 1 << 5,///< Searching only ever looks in the next half of the card
+	kHookFarImage     = 1 << 6 ///< on an endless page, go to the view on the first tile, not the nearest copy
 };
 
 class Hand
@@ -285,6 +286,7 @@ private:
 	double hx = 0.0, hy = 0.0, logM = 0.0, z = 0.0;
 	double cx = 0.0, cy = 0.0, cvx = 0.0, cvy = 0.0;
 	double travelW = reader::kCardWidth, travelH = 1e9;///< the carriage's end stops: the card
+	bool endStops  = true;                              ///< none on an endless page
 
 	// The plan.
 	std::deque< Segment > queue;
@@ -301,6 +303,10 @@ private:
 	// Manual.
 	bool manualMode = false;
 	double manualFromX = 0.0, manualFromY = 0.0, manualToX = 0.0, manualToY = 0.0, manualDt = 0.0;
+	/// On the endless page, the tile Position X / Y are read on: the one
+	/// nearest the carriage when the hand became yours, so taking over does
+	/// not whip the carriage back to the first tile.
+	double manualTileX = 0.0, manualTileY = 0.0;
 
 	// The views.
 	std::vector< View > views;

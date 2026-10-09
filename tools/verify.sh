@@ -179,7 +179,7 @@ fi
 step "Checks (this Mac's GPU, 1280x720 and 320x180)"
 #---------------------------------------------------------------------------
 # Every claim the README makes, in the order the README makes them.
-CHECKS="identity mips dark magnify defocus field track carriage shutter hunt stock screen filmed sync resize state"
+CHECKS="identity mips dark magnify defocus field track carriage shutter hunt stock screen filmed sync endless resize state"
 for check in $CHECKS fitts operator-law cues names; do
 	if out=$( "$MFTEST" --$check 2>&1 ); then
 		printf '   ok   mftest --%s: %s checks\n' "$check" "$( printf '%s\n' "$out" | grep -c '^  ok' )"

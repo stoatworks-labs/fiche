@@ -40,6 +40,13 @@ constexpr double kBowSpacing = 25.0;
 
 //---------------------------------------------------------------------------
 // The card.
+//
+// An endless card (Layout Endless) is the grid with no header and no
+// margins, repeated for ever in both directions: `width` x `height` is then
+// ONE TILE of C x R cells, each a frame with half a gutter round it, and a
+// point anywhere on the page is the tile's point at ( x mod width, y mod
+// height ). The frames keep the size they have on the card, so a layout
+// change does not change what a magnification shows.
 //---------------------------------------------------------------------------
 struct Card
 {
@@ -47,8 +54,9 @@ struct Card
 	double gutter = 0.0;///< mm between frames
 	double aspect = 16.0 / 9.0;
 	double frameW = 1.0, frameH = 1.0;///< mm
-	double width = kCardWidth, height = 1.0;
+	double width = kCardWidth, height = 1.0;///< the card, or one tile of the endless page
 	double gridX = kMargin, gridY = kHeader + kMargin;///< frame ( 0, 0 )'s top-left, mm
+	bool endless = false;
 
 	int Frames() const
 	{
@@ -72,7 +80,7 @@ struct Card
 	}
 	bool operator==( const Card& o ) const
 	{
-		return cols == o.cols && rows == o.rows && gutter == o.gutter && aspect == o.aspect;
+		return cols == o.cols && rows == o.rows && gutter == o.gutter && aspect == o.aspect && endless == o.endless;
 	}
 	bool operator!=( const Card& o ) const
 	{
@@ -81,8 +89,12 @@ struct Card
 };
 
 /// C x R frames of the clip's aspect, `gutter` mm apart, across 140 mm. A
-/// gutter that would leave a frame narrower than 1 mm is reduced.
-Card MakeCard( int cols, int rows, double gutterMm, double aspect );
+/// gutter that would leave a frame narrower than 1 mm is reduced. Endless:
+/// the same frames as one tile of an endless page, half a gutter round each.
+Card MakeCard( int cols, int rows, double gutterMm, double aspect, bool endless = false );
+
+/// x reduced to [ 0, period ): where a point of the endless page falls on its tile.
+double Wrap( double x, double period );
 
 //---------------------------------------------------------------------------
 // The lens.
@@ -110,13 +122,16 @@ class Bow
 {
 public:
 	/// Heights in [-amplitude, amplitude] on a 25 mm lattice over the card,
-	/// smoothed by a uniform cubic B-spline. Seeded.
+	/// smoothed by a uniform cubic B-spline. Seeded. On an endless card the
+	/// lattice is periodic with the tile (the nearest whole number of cells
+	/// to 25 mm each way, wrapped), so the page has no seam in its bow.
 	void Build( const Card& card, double amplitudeMm, uint32_t seed );
 	/// The film's height at card point ( x, y ), mm; positive is towards the lens.
 	double At( double x, double y ) const;
 
 	/// The field sampled every millimetre, for the GPU's bilinear lookup:
-	/// sample ( i, j ) is At( i, j ). Width floor( card.width ) + 2.
+	/// sample ( i, j ) is At( i, j ). Width floor( card.width ) + 2, so a
+	/// tile point in [ 0, width ) always has both neighbours.
 	int SampleWidth() const
 	{
 		return sampleW;
@@ -136,6 +151,8 @@ public:
 
 private:
 	int nx = 0, ny = 0;
+	bool periodic = false;
+	double spacingX = kBowSpacing, spacingY = kBowSpacing;
 	double amplitude = 0.0;
 	double width = kCardWidth, height = 1.0;
 	std::vector< double > lattice;

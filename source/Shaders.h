@@ -68,7 +68,8 @@ enum Hook : int
 	kHookColumnOrder  = 1 << 7,///< the step-and-repeat camera fills columns first
 	kHookDustOnScreen = 1 << 8,///< dust that stays on the screen
 	kHookNaiveCover   = 1 << 9,///< box coverage as min - max of absolute card positions: cancels in float32
-	kHookPlainBox     = 1 << 10///< the clip's mips a plain 2 x 2 box, dropping an odd last row
+	kHookPlainBox     = 1 << 10,///< the clip's mips a plain 2 x 2 box, dropping an odd last row
+	kHookNoWrap       = 1 << 11 ///< the endless page not wrapped: the tile's edge and the glass beyond it
 };
 
 } // namespace fiche::shaders

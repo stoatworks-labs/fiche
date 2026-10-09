@@ -33,6 +33,8 @@ MUTANTS=(
 	"source/Hand.cpp|std::log2( distance / width + 1.0 );|std::log2( distance / width + 2.0 );|--fitts|C++: Shannon's + 1 as + 2, 1 -> 2"
 	"source/Reader.cpp|return std::fabs( defocusMm ) * magnification / ( 2.0 * fNumber * ( magnification + 1.0 ) );|return std::fabs( defocusMm ) * magnification / ( 3.0 * fNumber * ( magnification + 1.0 ) );|--defocus|C++: the blur circle's radius over 3 N, not 2 N, 2 -> 3"
 	"source/Fiche.cpp|filmClock -= interval;|filmClock += interval;|--filmed|C++: the camera's clock gains an interval instead of spending one, - -> +"
+	"source/Shaders.cpp|return p - CardSize * floor( p / CardSize );|return p + CardSize * floor( p / CardSize );|--endless|GLSL: a point before the tile moved a tile further away, not onto it, - -> +"
+	"source/Hand.cpp|targetX += card.width * std::round( ( planned.x - targetX ) / card.width );|targetX += card.width * std::round( ( planned.x + targetX ) / card.width );|--operator-law|C++: the nearest copy of a view found from the sum of positions, not the difference, - -> +"
 )
 
 limit() {

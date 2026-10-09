@@ -21,7 +21,7 @@ edge are going past, smeared by the move and soft from a zoom that does not hold
 > read back out of the picture, is the model's to 0.0003 mm; the picture is where the hand model
 > puts the carriage, frame by frame, through pans, corrections and crash zooms; every pan's
 > duration is Fitts's law and its profile minimum jerk; the hunt turns where a reaction time
-> puts it, and the picture's blur follows the knob. All 33 controls measurably change the picture.
+> puts it, and the picture's blur follows the knob. All 34 controls measurably change the picture.
 > It has **never been loaded into Resolume on macOS**. The one host it has run in on a Mac is the
 > fleet's own test host, `oxbow`, for 120 frames.
 > On Windows, a build of v0.1.0 loads, registers and renders in Resolume Arena 7.27.1, with every
@@ -29,6 +29,8 @@ edge are going past, smeared by the move and soft from a zoom that does not hold
 > GPU. The six controls that steer the operator over seconds (Hand Speed, Accuracy, Crash Zoom,
 > Focus Skill, Carriage Play, Parfocal) could not be shown moving there, because the operator moves
 > the picture between the test's grabs.
+> **Layout** (the endless page) is newer than v0.1.0: it is in the source and arrives with the
+> next release, so the v0.1.0 download does not have it.
 > Try it on a spare layer before you put it in a show.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human author.
@@ -110,6 +112,9 @@ Then, in this order:
    library actually had. **Lamp** down warms the whole screen.
 6. **Sync** to **Beat**. Every act — a pan, a zoom out, a jump — now starts on a beat of the
    host's clock. **Jump** ends the current dwell at once; map it to a pad.
+7. **Layout** to **Endless**. The header, the margins and the glass go, and the grid of frames
+   runs on for ever in every direction: the operator never meets an edge, and reading carries on
+   to the right and down for as long as the clip plays.
 
 **The magnification is the multiplier.** **Zoom** sets how closely the operator reads. Raise it
 and every movement gets faster on screen, the depth of focus gets shallower and the hunt gets
@@ -146,7 +151,9 @@ the knob to the View group.
 wider or taller than the screen at the reading magnification is read in screen-sized views, left
 to right, top to bottom. **Skimming**: a few views on, usually one or two. **Searching**: any
 other view on the card, every one equally likely. **Mixed** (the default): all three, mostly
-skimming and searching.
+skimming and searching. On an endless page every view is there once per tile, and the operator
+goes to the copy nearest it: reading runs on past the end of a row instead of going back, and a
+search never travels more than half a tile.
 
 **Dwell** — how long the operator looks at a view, on average, before the next act: 0.1 s to
 10 s. The actual dwell varies around it, sometimes much shorter, sometimes longer.
@@ -176,7 +183,7 @@ focus the view arrived.
 **Carriage Play** — how loosely the carriage follows the hand. 0 is rigid: the picture goes
 exactly where the hand does. Above that the carriage is a mass on a spring, from a stiff 40 Hz to
 a loose 3 Hz and less and less damped, so a fast pan stopped hard overshoots and settles. The
-carriage has end stops at the card's edges.
+carriage has end stops at the card's edges; an endless page has none.
 
 **Jump** — ends the current dwell now: the next act starts this frame.
 
@@ -189,7 +196,9 @@ operator reads at; the crash zooms go out from it and come back to it. In **Manu
 lens.
 
 **Position X**, **Position Y** — Manual only: the point on the card under the centre of the
-screen, from one edge of the card to the other. The carriage follows through its grip.
+screen, from one edge of the card to the other. The carriage follows through its grip. On an
+endless page they run across one tile of the page — the one nearest the carriage when you took
+over, so switching to Manual does not send it back to where it started.
 
 **Focus** — Manual only: the knob, as the defocus at the centre of the screen, ±1 mm of the
 card's height. The middle (0) is sharp at the centre; the bowed card still leaves the rest of the
@@ -199,9 +208,17 @@ screen a little out.
 
 ## The Fiche group
 
+**Layout** — **Card** (the default): an A6 card, with the header and its title across the top,
+clear margins round the grid, and the reader's bright glass beyond its edges. **Endless**: the
+grid of frames with no header and no margins, repeated for ever in every direction, so the page
+has no edges at all and the carriage no end stops. The frames keep the size they have on the
+card. One tile of the page — Columns × Rows frames — repeats, and everything on it repeats with
+it: the bow, the dust and, with Content Filmed, the frames the camera has filled, so there is no
+seam anywhere.
+
 **Columns**, **Rows** — the grid of frames, 1 to 16 each (14 × 7 by default, after the
 computer-output layout). The card is 148 mm wide, A6, and its height follows the grid. Each frame
-has the clip's aspect.
+has the clip's aspect. On an endless page they are the tile that repeats.
 
 **Gutter** — the space between frames, 0 to 3 mm of card.
 
@@ -229,11 +246,12 @@ is flat.
 so they move, magnify and blur with the picture.
 
 **Scratches** — clear scratches through the emulsion along the card, the way it slides into the
-reader.
+reader. On an endless page a scratch runs the page's whole length, as on a roll of film.
 
 **Title** — the eye-readable header across the top of the card, up to 40 characters in a dot-matrix
 face: capitals, digits and a little punctuation (`- . , : / # ( ) ' & + ! ? =`). Lower case is
-shown as capitals; anything else is a space. Visible whenever the header is in view.
+shown as capitals; anything else is a space. Visible whenever the header is in view. Card only:
+an endless page has no header.
 
 ---
 
@@ -334,7 +352,7 @@ carriage and the knob.
 exposure.
 
 **Rows or Title seem to do nothing.** At reading magnification you see one frame, not the grid
-or the header. Zoom out.
+or the header. Zoom out. On an endless page there is no header, so Title does nothing at all.
 
 **The picture is orange or dark.** Lamp is low, or the film is a dense stock. Lamp at its top is
 white.
@@ -357,7 +375,7 @@ It records the GL vendor and version at load, and which shader failed if one did
 ## Known limits
 
 - **Never loaded into Resolume on macOS**, and nothing has driven the controls in a host on a
-  Mac. How 33 controls in five groups read in the inspector is untested there. On Windows the
+  Mac. How 34 controls in five groups read in the inspector is untested there. On Windows the
   only host run is the fleet's automated gate in Arena 7.27.1, on software rendering.
 - **The laws are real; the person is not.** Fitts's law, minimum-jerk movement, scatter in
   proportion to distance and corrective submovements are the motor-control literature's, but the
@@ -369,6 +387,9 @@ It records the GL vendor and version at load, and which shader failed if one did
   magnification and diazo's speckle are not modelled.
 - **The frames are the clip's shape**, not a real microfiche's portrait pages: a widescreen clip
   letterboxed in a portrait page would waste the screen.
+- **The endless page repeats one tile**, Columns × Rows frames: the bow, the dust and any filmed
+  frames come round again every tile, which is always about 141 mm across (the card's grid and
+  one more gutter) and as tall as its rows.
 - **4K costs more than half a 60 fps frame** (see Performance).
 - **No presets**, no audio input (Resolume can drive any control from audio, and Sync takes the
   beat), and no OpenFX version.

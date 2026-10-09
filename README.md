@@ -10,7 +10,7 @@
 > is the second-order step response to 2e-11 mm against an independent integration;
 > every pan's duration is Fitts's law and its profile minimum jerk; the hunt turns where
 > a reaction time puts it and the picture's blur follows the knob frame by frame; a black
-> clip stays black at 75× — with 23 negative controls and 11 one-character mutants that
+> clip stays black at 75× — with 25 negative controls and 13 one-character mutants that
 > prove the checks can fail. It has **never been loaded into Resolume on macOS**.
 > On Windows, a build of v0.1.0 loads, registers and renders in Resolume Arena 7.27.1 with all 39 host controls as declared, on software rendering. See [Status](#status).
 
@@ -105,6 +105,12 @@ None of these is drawn. Each is the hand or the reader doing what it does:
 - **The card itself.** Zoomed out: the grid of frames, the gutters, the header with
   its title, and beyond the card's edge only the reader's bright glass. Dust and
   scratches ride with the card; the screen's grain and its hotspot stay put.
+- **Or an endless page.** With `Layout` on Endless the header, the margins and the
+  glass go: the grid of frames repeats for ever in every direction, the carriage has
+  no end stops, and the operator goes to the nearest copy of each view, so it reads
+  on to the right and down for as long as the clip plays. The bow, the dust and the
+  filmed frames repeat with the tile, so the page has no seam, and a scratch runs its
+  whole length, as on a roll of film.
 
 With `Operator` on Manual the hand is yours: `Position X/Y`, `Zoom` and `Focus`, still
 through the carriage's grip, the lens's blur and the screen.
@@ -126,7 +132,7 @@ than filmed off a screen, and the clips are Resolume's bundled demo media.*
 | --- | --- |
 | **Operator** | Operator (Auto, Manual), Browse (Reading, Skimming, Searching, Mixed), Dwell (0.1–10 s between acts), Sync (Free, Beat, 2 Beats, Bar — acts start on the host's beat), Hand Speed (Fitts's slope, 0.25 to 0.03 s/bit), Accuracy (the landing scatter, 25% to 1% of the distance), Crash Zoom (how often a long move zooms out to travel), Focus Skill (reaction time, how much each pass slows, the first turn's direction), Carriage Play (rigid, or a grip from 40 Hz down to 3 Hz), Jump (end the dwell now). |
 | **View** | Zoom (2×–75×; in Auto, the magnification the operator reads at), Position X, Position Y, Focus (Manual: the hand, and the defocus at the screen's centre, ±1 mm). |
-| **Fiche** | Columns, Rows (1–16 each), Gutter (0–3 mm), Content (Live: every frame the clip as it plays; Filmed: a step-and-repeat camera films the clip into the frames, one per Interval), Interval (0.05–10 s), Film (Ideal, Silver, Silver Negative, Diazo Blue, Diazo Black, Vesicular, Colour), Flatness (the card's bow, 0–0.5 mm), Dust, Scratches, Title (the header's text). |
+| **Fiche** | Layout (Card: the A6 card with its header, margins and the reader's glass beyond; Endless: the grid repeated for ever, no header and no edges), Columns, Rows (1–16 each), Gutter (0–3 mm), Content (Live: every frame the clip as it plays; Filmed: a step-and-repeat camera films the clip into the frames, one per Interval), Interval (0.05–10 s), Film (Ideal, Silver, Silver Negative, Diazo Blue, Diazo Black, Vesicular, Colour), Flatness (the card's bow, 0–0.5 mm), Dust, Scratches, Title (the header's text). |
 | **Reader** | Aperture (f/2–f/16), Parfocal (how far the zoom throws the focus, 0–1 mm per doubling), Shutter (the exposure, as a share of the frame), Hotspot (the projection's cos⁴ falloff), Lamp (2000–6504 K), Screen Grain, Room Light. |
 | **Output** | Seed, Mix. |
 
@@ -138,7 +144,9 @@ to travel more often than not, and is not good at focusing.
 
 ## Status
 
-**v0.1.0, and honestly early — 8 October 2026.**
+**v0.1.0, and honestly early — 8 October 2026.** `Layout` (the endless page) was
+added on 9 October and is in this source, not yet in a release: the downloads above
+are v0.1.0 without it.
 
 ### Measured offline, on macOS
 
@@ -162,12 +170,13 @@ and again on **Apple's software renderer** at 320×180. What it establishes:
 | `--screen` | the falloff within **5.5e-7** of cos⁴; the grain **identical** at two carriage positions; the dust the same picture 17 px over after the card moved 17 px, to 0.0008 |
 | `--filmed` | after 20 and 70 frames at a 0.0731 s interval, **12 of 12** frames hold the clip frame the camera exposed into them, in reading order |
 | `--sync` | at 117 BPM, 17 acts each starting within **5e-8 s** of a beat |
+| `--endless` | the endless page's bow periodic with its tile to **2e-16 mm**; a black clip zoomed out at a tile's corner lights **0** pixels (no title, no glass; the card at the same zoom lights 482,490); across a tile's left/right seam, the picture with the carriage at the edge and the picture half a screen inside agree to **0.00023** (bound 0.0015: four float32 ULPs of the tile over a pixel), top/bottom to 0.00009 — the grid, the dust, the scratches and a 0.5 mm bow alike |
 | `--fitts` | 1,590 pans over 900 s: durations a + b log2(D/W + 1) exactly; peak speed within **0.19%** of minimum jerk's 1.875 D/T; landing scatter **0.067 D** along (k 0.07) and **0.028 D** across (0.4 k), the same for short and long pans; **1,589 of 1,589** followed by a correction exactly when they missed |
-| `--operator-law` | 1,500 s in each Browse mode: the carriage on the card and the lens in range throughout; Reading **1,910 of 1,910** steps to the next view; Searching's jumps uniform (chi-square 38.5 on 46 degrees of freedom); a seed browses identically twice |
+| `--operator-law` | 1,500 s in each Browse mode: the carriage on the card and the lens in range throughout; Reading **1,910 of 1,910** steps to the next view; Searching's jumps uniform (chi-square 38.5 on 46 degrees of freedom); on the endless page **1,777 of 1,777** moves (Reading) and **1,371 of 1,371** (Mixed) go to the nearest copy of their view, the carriage running on **110** tiles from the first; a seed browses identically twice |
 | `--resize`, `--state` | a new raster is a fresh card (**0 bytes** differ); the host's GL state comes back |
-| `--negative` | **23** deliberately wrong models, **23** caught |
-| mutation | **11** one-character mutants of the shipped GLSL and C++, **11** caught |
-| `tools/sweep.py` | all **33** controls measurably change the picture |
+| `--negative` | **25** deliberately wrong models, **25** caught |
+| mutation | **13** one-character mutants of the shipped GLSL and C++, **13** caught |
+| `tools/sweep.py` | all **34** controls measurably change the picture |
 | shaders | all 6 compile through `glslc`, not merely through Apple's driver |
 | the bundle | universal (`x86_64 arm64`), exports `plugMain`, ad-hoc signs; `oxbow` reports `SW Fiche` / `MF01` / `effect` and renders 120 frames through `plugMain` |
 
@@ -184,11 +193,11 @@ macOS figures only.
 
 It has **never been loaded into Resolume on macOS**. Everything above was compiled,
 rendered and measured offline against the real plugin class in a headless CGL
-context, plus an `oxbow` load. How 33 controls read in Arena's inspector, and how
+context, plus an `oxbow` load. How 34 controls read in Arena's inspector, and how
 the operator feels to somebody who has sat at a real reader, are untested.
 
 **Windows, in Resolume Arena 7.27.1** (win-lab, Mesa llvmpipe, no GPU, 2026-10-09): a
-build of this source loads from Extra Effects, registers as `SW Fiche` / `MF01` /
+build of v0.1.0 — before `Layout` was added — loads from Extra Effects, registers as `SW Fiche` / `MF01` /
 effect, all 39 host controls match the declaration in name, order, type, range and
 default, it renders, and Arena's log stays clean: 9 of 9 of the fleet gate's checks.
 26 of the 32 controls it can move changed the picture (31 under a precondition) and

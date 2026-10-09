@@ -45,6 +45,8 @@ table (`Controls.cpp`).
 - **The picture**: `--identity`, `--mips`, `--dark`, `--magnify`, `--stock`, `--screen`.
 - **The lens**: `--defocus` (a point's disc and its light), `--field` (the bow, read
   out of the picture), `--shutter` (a smear's centre and length).
+- **The endless page**: `--endless` (no header or glass; the picture across a tile's
+  seam; the periodic bow); its hand is in `--operator-law`.
 - **The hand**: `--track` (the picture is where the carriage is), `--carriage` (the
   grip against RK4), `--hunt` (the plan's reversals and the picture's blur), `--sync`;
   no GL: `--fitts`, `--operator-law`.
@@ -52,10 +54,10 @@ table (`Controls.cpp`).
   `--cues`, `--names`.
 - One raster only: add `--size WxH`. The software renderer:
   `MFTEST_RENDERER=software ./build/mftest --defocus --size 320x180`.
-- **The checks can fail**: `--negative` (23 wrong models), `tools/mutate.sh`
-  (11 one-character mutants of the GLSL and the C++).
+- **The checks can fail**: `--negative` (25 wrong models), `tools/mutate.sh`
+  (13 one-character mutants of the GLSL and the C++).
 - What CI runs: `--offline` and `tools/glslc.sh`.
-- No dead controls: `python3 tools/sweep.py` (33 parameters); `--bare` lists the
+- No dead controls: `python3 tools/sweep.py` (34 parameters); `--bare` lists the
   ones that only act with another control set.
 - Cost: `--bench` (720p/1080p/4K, GPU time by GL_TIME_ELAPSED).
 - `MFTEST_DEBUG=1` makes `--magnify`, `--track` and `--fitts` say where they looked.
@@ -65,6 +67,11 @@ table (`Controls.cpp`).
   carriage P is the card point at the screen's centre; `f = P + ( s.x, −s.y ) / M`.
   Card y runs DOWN, screen y UP; GL textures are bottom-up, so a frame's `v` (down)
   is `1 − t`.
+- **The endless page** (`Layout` Endless) is ONE TILE of the grid, repeated: the
+  `Card`'s width and height are the tile's, a page point is `reader::Wrap`ped onto it
+  (`onTile` in the GLSL), and everything on the tile is periodic with it. The carriage
+  is unbounded on the CPU (double) and handed to the GPU less whole tiles. Anything
+  new drawn on the card must be periodic with the tile too, or the page gets a seam.
 - **The clip is held in linear light.** The copy pass converts; the store keeps
   sRGB code in RGBA8 and its mips average in linear. A test clip meant to be read
   back must be linear in LIGHT, not in code (see AGENTS.md).

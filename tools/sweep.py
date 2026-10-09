@@ -64,6 +64,7 @@ SWEEP = {
     "Position X": ("0.3", "0.7", MANUAL),
     "Position Y": ("0.3", "0.7", MANUAL),
     "Focus": ("0.5", "1", MANUAL),
+    "Layout": ("0", "1", MANUAL + ["Zoom=0"]),
     "Columns": ("4", "14", []),
     "Rows": ("2", "7", MANUAL + ["Zoom=0"]),
     "Gutter": ("0", "1", MANUAL + ["Zoom=0.3"]),

@@ -40,6 +40,8 @@ constexpr double kMaxFrameDelta = 0.25;
 constexpr double kStoreBudgetBytes = 256.0 * 1024.0 * 1024.0;
 /// The most frames a camera exposes in one host frame.
 constexpr int kMaxExposuresPerFrame = 8;
+/// The dust lattice, mm: at most one particle per cell (the shader's DustCell).
+constexpr double kDustCell = 0.5;
 
 /// Wall clock, for hosts that never call SetTime.
 double wallSeconds()
@@ -447,7 +449,8 @@ FFResult Fiche::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	const int cols     = IntegerOf( PT_COLUMNS, params[ PT_COLUMNS ] );
 	const int rows     = IntegerOf( PT_ROWS, params[ PT_ROWS ] );
 	const uint32_t seedValue = static_cast< uint32_t >( IntegerOf( PT_SEED, params[ PT_SEED ] ) );
-	card               = reader::MakeCard( cols, rows, GutterFromParam( params[ PT_GUTTER ] ), static_cast< double >( width ) / height );
+	const bool endless = OptionIndex( params[ PT_LAYOUT ], static_cast< int >( Layout::Count ) ) == static_cast< int >( Layout::Endless );
+	card               = reader::MakeCard( cols, rows, GutterFromParam( params[ PT_GUTTER ] ), static_cast< double >( width ) / height, endless );
 	const double flatness = FlatnessFromParam( params[ PT_FLATNESS ] );
 	if( !bowBuilt || card != bowCard || flatness != bowAmplitude || seedValue != bowSeed )
 	{
@@ -662,14 +665,34 @@ FFResult Fiche::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 		s.Set( "Gutter", static_cast< float >( card.gutter ) );
 		setVec2( s, "CardSize", card.width, card.height );
 		setVec2( s, "BowSize", bow.SampleWidth(), bow.SampleHeight() );
-		s.Set( "HeaderHeight", static_cast< float >( reader::kHeader ) );
+		s.Set( "HeaderHeight", static_cast< float >( card.endless ? 0.0 : reader::kHeader ) );
+		s.Set( "Endless", card.endless ? 1 : 0 );
+		// Dust lies in cells of about half a millimetre; on the endless page a
+		// whole number of them spans the tile, so the dust repeats with it and
+		// no particle is cut by a tile's edge.
+		const int dustX = card.endless ? std::max( 1, static_cast< int >( std::lround( card.width / kDustCell ) ) ) : 0;
+		const int dustY = card.endless ? std::max( 1, static_cast< int >( std::lround( card.height / kDustCell ) ) ) : 0;
+		setVec2( s, "DustCell", card.endless ? card.width / dustX : kDustCell, card.endless ? card.height / dustY : kDustCell );
+		setInt2( s, "DustCells", dustX, dustY );
 
+		// The carriage on the endless page goes wherever the hand takes it, so
+		// its position can grow without limit. The GPU is given it less a
+		// whole number of tiles -- the same number for every state of the
+		// exposure, so the path stays continuous -- and float32 never sees
+		// more than a tile or two.
+		double tileX = 0.0, tileY = 0.0;
+		if( card.endless )
+		{
+			const hand::State& newest = exposure.back();
+			tileX = card.width * std::floor( newest.x / card.width );
+			tileY = card.height * std::floor( newest.y / card.height );
+		}
 		float states[ 4 * kStates ];
 		for( int k = 0; k < kStates; ++k )
 		{
 			const hand::State& st = exposure[ static_cast< size_t >( k ) ];
-			states[ 4 * k ]       = static_cast< float >( st.x );
-			states[ 4 * k + 1 ]   = static_cast< float >( st.y );
+			states[ 4 * k ]       = static_cast< float >( st.x - tileX );
+			states[ 4 * k + 1 ]   = static_cast< float >( st.y - tileY );
 			states[ 4 * k + 2 ]   = static_cast< float >( std::exp2( st.logM ) );
 			states[ 4 * k + 3 ]   = static_cast< float >( st.z );
 		}
@@ -692,7 +715,7 @@ FFResult Fiche::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 		for( size_t i = 0; i < glyphs.size(); ++i )
 			titleCodes[ i ] = glyphs[ i ];
 		glUniform1iv( s.FindUniform( "Title" ), shaders::kMaxTitle, titleCodes );
-		s.Set( "TitleLength", static_cast< int >( glyphs.size() ) );
+		s.Set( "TitleLength", card.endless ? 0 : static_cast< int >( glyphs.size() ) );
 		setVec2( s, "FontSize", fontW, fontH );
 
 		setVec3( s, "Lamp", lamp );

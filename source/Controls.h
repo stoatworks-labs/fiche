@@ -42,6 +42,7 @@ enum ParamId : unsigned int
 	PT_FOCUS,
 
 	// -- Fiche: the card -----------------------------------------------------
+	PT_LAYOUT,
 	PT_COLUMNS,
 	PT_ROWS,
 	PT_GUTTER,
@@ -123,6 +124,12 @@ enum class Sync
 	Beat,    ///< acts start on the host's beat
 	TwoBeats,
 	Bar,
+	Count
+};
+enum class Layout
+{
+	Card = 0,///< an A6 card: a header with the title, margins, glass beyond its edges
+	Endless, ///< the grid of frames repeated for ever: no header, no edges, no end stops
 	Count
 };
 enum class Content

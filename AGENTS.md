@@ -69,6 +69,18 @@ and the focus knob (mm).
   (1 − exposure on a negative), Rec.709 luminance on a mono stock. Unexposed film —
   gutters, margins, unwritten frames — is dark on a positive card and clear on a
   negative one.
+- **The endless page** (`Layout` Endless): `MakeCard( …, endless )` keeps the card's
+  frame size and drops the header and margins, so `width` × `height` becomes ONE
+  TILE of C × R cells, each a frame with half a gutter round it (`gridX = gridY =
+  gutter / 2`; the tile is always 140 mm + one gutter wide). A page point is the
+  tile's point at `( x mod width, y mod height )` — `reader::Wrap`, the GLSL's
+  `onTile` — and there is no "off": no glass, no header, no title. Everything on the
+  page is made periodic with the tile, so it has no seam: the bow's lattice is the
+  nearest whole number of cells to 25 mm each way and wraps; dust lies in a whole
+  number of cells per tile (`DustCell`, `DustCells`); a scratch runs the whole length.
+  The CPU hands the GPU the carriage less a whole number of tiles (the same for all
+  17 states of the exposure), so float32 never sees more than a tile or two however
+  far the operator has gone.
 
 ### The hand (`Hand.h`)
 
@@ -106,6 +118,13 @@ Auto is a loop of acts: **focus, dwell, act, travel, settle**.
 - **Manual**: the hand is `Position X/Y` (linear between host frames, through the
   carriage), the lens `Zoom`, and `Focus` is the defocus at the screen's centre —
   measured from best focus, so Parfocal does not act in Manual.
+- **On the endless page** there are no end stops and no clamp on a landing, and the
+  target of every act is the copy of the chosen view NEAREST the hand (`targetX +=
+  width · round( ( planned.x − targetX ) / width )`, likewise y): Reading runs on to
+  the right and down for ever, a search never crosses more than half a tile, and the
+  view indices — Reading, Skimming, Searching — are unchanged. Manual reads Position
+  X/Y on the tile nearest the carriage when the hand was taken over
+  (`manualTileX/Y`), so switching to Manual does not whip it back to the first tile.
 
 ## Decisions taken without asking
 
@@ -140,9 +159,21 @@ Auto is a loop of acts: **focus, dwell, act, travel, settle**.
   on a quarter-millimetre lattice of the screen, faded where a pixel is coarser.
 - **No audio input** for v0.1.0: Resolume can drive any control, and Sync takes the
   host's beat.
+- **The endless page** (Allan's request, 2026-10-09: "removes the top text and makes
+  the fiche an endless page") repeats the card's GRID in both directions rather than
+  growing one long strip: a browsing operator moves in two dimensions, and a tile
+  keeps every frame, the dust and the filmed store finite. `Layout` heads the Fiche
+  group, though FFGL's ABI is by index and it moves every later control by one:
+  Arena addresses parameters by name (measured, see the fleet memory), and v0.1.0
+  was hours old.
+- **On the endless page Searching jumps to the nearest copy** of a uniformly chosen
+  view, so its jumps are uniform over the views and within half a tile; the
+  alternative (any point within some radius) would change the view statistics the
+  card's checks rely on.
 - **StoatworksAbout.h and ATTRIBUTIONS.md are generated** by stoatworks-backend's
   sync-about.py and sync-attributions.py (registered 2026-10-09). The About block
-  has four buttons, the user guide's among them, so it is 38 parameters long, and
+  has four buttons, the user guide's among them, so with Layout the plugin declares 39
+  parameters, and
   `tools/sweep.py` skips its buttons.
 
 ## The traps
@@ -205,12 +236,24 @@ picture in a named `Floats` first; no other check does it.
 of 20 px font pixels steps at every font-pixel column; it looked like a tap artefact
 and is not (enlarged, the smear is smooth). A wider prefilter was tried and reverted.
 
+**A seam compared through a texture filter reads the filter's weight steps.**
+`--endless` first compared the picture either side of a tile's seam on the test card
+and found 0.0016 against a 0.002 bound. The two pictures reach the same film point by
+different float sums (a carriage at the edge against one most of a tile along), a few
+float32 ULPs apart, and the GPU filters a texture with about eight bits of sub-texel
+weight: across a hard texel edge in the clip one ULP can flip a 1/256 weight step.
+On a smooth clip the difference fell to 0.00023, all of it the page's own edges
+(frames, dust, scratches) drawn by coverage; the bound is now four ULPs of the tile
+over a pixel's footprint, per raster.
+
 **Sweep contexts.** Shutter acts only on a moving carriage (swept with a slow hand
 that is nearly always mid-pan), Rows only shows on the whole card, Dust only at high
 magnification on a small raster. `tools/sweep.py --bare` (2026-10-08) lists what is
 dead without its context: Position X, Position Y and Focus (Manual), Rows (the whole
 card), Interval (Filmed), Title (the header in view), and Parfocal barely alive (it
 acts only through the operator's zooms; Manual's Focus is measured from best focus).
+Layout is swept Manual at 2x, where the card's header and glass give way to the page;
+Title does nothing on the endless page (it has no header).
 
 ## Would this hold on another rasteriser, at another raster?
 
@@ -239,12 +282,16 @@ Apple's software renderer (`tools/verify.sh`).
   to 5e-3 (a float control's position against a footprint-wide edge).
 - `--filmed`: one 8-bit level (the store is RGBA8 of sRGB code).
 - `--sync`: 1e-6 s (a float bar phase is good to ~6e-8 of a bar).
+- `--endless`: the bow's periodicity to 1e-12 (double arithmetic); no lit pixel at all
+  for a black clip (nothing is there to light); a seam to four float32 ULPs of the
+  tile over one pixel's footprint times the film's contrast, on a smooth clip (see the
+  traps: a hard-edged clip would read the filter's 1/256 weight steps instead).
 - `--resize`: byte equality in one context.
 - `--fitts`, `--operator-law`: no GL; 4 σ of each estimator.
 
 ## A check that cannot fail is not a check
 
-`mftest --negative` runs 23 wrong models and requires each check to fail: the lens
+`mftest --negative` runs 25 wrong models and requires each check to fail: the lens
 2% strong (`--identity`, `--magnify`), plain-box mips (`--mips`), the cancelling
 coverage (`--dark`), the blur circle without its ( M + 1 ) and a cone of taps
 instead of a disc (`--defocus`), the bow's sign (`--field`), the picture shown the
@@ -254,8 +301,9 @@ negative printed positive (`--stock`), cos³, grain on the card and dust on the
 screen (`--screen`), the camera filling columns first (`--filmed`), a beat at its
 frame's start (`--sync`), the store's exposures surviving a reallocation
 (`--resize`), Fitts without Shannon's + 1, a cubic ease and distance-blind scatter
-(`--fitts`), a biased search (`--operator-law`), and every cue ramping (`--cues`).
-23 of 23 caught (2026-10-08).
+(`--fitts`), a biased search and, on the endless page, the view on the first tile
+rather than its nearest copy (`--operator-law`), the endless page not wrapped
+(`--endless`), and every cue ramping (`--cues`). 25 of 25 caught (2026-10-09).
 
 `tools/mutate.sh` changes one character of the shipped code and requires the named
 check to fail, on a copy of the tree built from scratch:
@@ -273,8 +321,10 @@ check to fail, on a copy of the tree built from scratch:
 | C++ Shannon's `+ 1.0` → `+ 2.0` | `--fitts` |
 | C++ the blur radius `2.0 * fNumber` → `3.0` (in `Reader.cpp`, which the harness also uses) | `--defocus` |
 | C++ the camera's clock `-=` → `+=` | `--filmed` |
+| GLSL a point before the tile moved a tile further, `p - CardSize` → `p + CardSize` | `--endless` |
+| C++ the nearest copy found from the sum, `planned.x - targetX` → `+` | `--operator-law` |
 
-11 of 11 caught (2026-10-08). The GLSL mutants prove the harness drives the shaders
+13 of 13 caught (2026-10-09). The GLSL mutants prove the harness drives the shaders
 the plugin ships, not a copy.
 
 ## Shape of the code
@@ -311,7 +361,9 @@ film's print; cos⁴; the grain is the screen's and the dust the card's; the cam
 frames in reading order, one per Interval; acts on the beat; pans obey Fitts with a
 minimum-jerk profile, land with distance-proportional scatter and are corrected
 exactly when they miss; the operator stays on the card, reads in order and searches
-uniformly; a resize is a fresh card; the host's GL state comes back; every control
+uniformly; on the endless page it goes to the nearest copy of each view and runs on
+past the first tile, there is no header or glass anywhere, and the picture runs on
+across a tile's seam, bow, dust and scratches alike; a resize is a fresh card; the host's GL state comes back; every control
 moves the picture.
 
 **Assumed, not measured**: that a person at a reader moves like this (the laws are
@@ -339,7 +391,7 @@ expectation's notes say. No OpenFX port; the browser demo is below.
   PluginEntry.cpp (the build stamp) and FFGL.cpp (plugMain). `-D__linux__` goes to the
   files that include the SDK only (FFGLPlatform.h). Committed, with
   `demo/wasm/inputs.sha256` pinning every input; rebuild with `demo/tools/build-wasm.sh`.
-- **The host** (`demo/wasm/glue.cpp`) constructs the plugin, reads its 38 declarations
+- **The host** (`demo/wasm/glue.cpp`) constructs the plugin, reads its 39 declarations
   back through the SDK's host getters (the panel, About block included, is built from
   them) and forwards SetFloatParameter, SetTextParameter, SetTime and ProcessOpenGL as
   mftest's Rig does; never SetBeatInfo. `FICHE_LOG_DIR` must be set before the FIRST
@@ -377,7 +429,9 @@ expectation's notes say. No OpenFX port; the browser demo is below.
   0.073 s, 120 frames: worst 1, 562 of 28 M. On SwiftShader, and with the bow forced to
   R16F, Manual stayed within 1. The comparer fails: Seed 2 differs in 16% of pixels,
   Position Y 0.03 mm away in 34%, the Auto run one frame out of step in 12%; and before
-  (a) the Manual case was worst 46, 83% of pixels.
+  (a) the Manual case was worst 46, 83% of pixels. That comparison was made on
+  v0.1.0's sources; the .wasm was rebuilt with Layout on 2026-10-09 (check_shaders.py
+  holds it to the sources) and the comparison has not been repeated since.
 - **Seen, not a fault**: at an Interval of exactly three frames (0.05 s) Filmed differed on
   18 of 120 frames, by up to 179 levels, each page frame k matching mftest's k + 1 or
   k - 1. The camera's `filmClock >= interval` sits on the boundary and the kit's clock is

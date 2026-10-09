@@ -923,12 +923,11 @@ bool startRig( Rig& rig, const Raster& raster, const Floats& picture, const Pert
 }
 
 /// Point the Manual hand at card point ( x, y ) mm, at magnification M.
+reader::Card cardOf( Rig& rig );
+
 void aim( Rig& rig, double x, double y, double M )
 {
-	const reader::Card card = reader::MakeCard( IntegerOf( PT_COLUMNS, rig.plugin.GetFloatParameter( PT_COLUMNS ) ),
-	                                            IntegerOf( PT_ROWS, rig.plugin.GetFloatParameter( PT_ROWS ) ),
-	                                            GutterFromParam( rig.plugin.GetFloatParameter( PT_GUTTER ) ),
-	                                            static_cast< double >( rig.width ) / rig.height );
+	const reader::Card card = cardOf( rig );
 	rig.Set( PT_POSITION_X, static_cast< float >( x / card.width ) );
 	rig.Set( PT_POSITION_Y, static_cast< float >( y / card.height ) );
 	rig.Set( PT_ZOOM, ParamFromZoom( M ) );
@@ -939,7 +938,9 @@ reader::Card cardOf( Rig& rig )
 	return reader::MakeCard( IntegerOf( PT_COLUMNS, rig.plugin.GetFloatParameter( PT_COLUMNS ) ),
 	                         IntegerOf( PT_ROWS, rig.plugin.GetFloatParameter( PT_ROWS ) ),
 	                         GutterFromParam( rig.plugin.GetFloatParameter( PT_GUTTER ) ),
-	                         static_cast< double >( rig.width ) / rig.height );
+	                         static_cast< double >( rig.width ) / rig.height,
+	                         OptionIndex( rig.plugin.GetFloatParameter( PT_LAYOUT ), static_cast< int >( Layout::Count ) )
+	                             == static_cast< int >( Layout::Endless ) );
 }
 
 //===========================================================================
@@ -2222,9 +2223,9 @@ struct HandRun
 	std::vector< std::pair< double, std::pair< double, double > > > path;///< ( t, hand x, y )
 	bool keepPath = false;
 
-	HandRun( int cols, int rows, double flatness, uint32_t seed, int hooks )
+	HandRun( int cols, int rows, double flatness, uint32_t seed, int hooks, bool endless = false )
 	{
-		card = reader::MakeCard( cols, rows, 0.8, 16.0 / 9.0 );
+		card = reader::MakeCard( cols, rows, 0.8, 16.0 / 9.0, endless );
 		s.seed = seed;
 		bow.Build( card, flatness, seed );
 		h.SetHooks( hooks );
@@ -2382,7 +2383,8 @@ int runFitts( const Perturb& perturb )
 int runOperatorLaw( const Perturb& perturb )
 {
 	std::printf( "\n=== operator-law: in every Browse mode the carriage stays on the card and the lens in its range, acts keep coming;\n"
-	             "    Reading goes view by view, Searching visits every view alike; a seed browses the same way every time\n" );
+	             "    Reading goes view by view, Searching visits every view alike; on the endless page the carriage runs on, to\n"
+	             "    the nearest copy of each view; a seed browses the same way every time\n" );
 	for( int mode = 0; mode < static_cast< int >( Browse::Count ); ++mode )
 	{
 		HandRun run( 4, 3, 0.3, 3, perturb.handHooks );
@@ -2454,6 +2456,54 @@ int runOperatorLaw( const Perturb& perturb )
 		                InfoOf( PT_BROWSE ).options[ mode ], acts, minX, maxX, minY, maxY, run.card.width, run.card.height,
 		                std::exp2( minM ), std::exp2( maxM ), extra.c_str() ) );
 	}
+	// The endless page: no end stops, and every view the copy of it nearest
+	// the hand, so the carriage runs on past the first tile and no move
+	// crosses more than half a tile.
+	for( int mode : { static_cast< int >( Browse::Reading ), static_cast< int >( Browse::Mixed ) } )
+	{
+		HandRun run( 4, 3, 0.3, 3, perturb.handHooks, true );
+		run.s.browse   = static_cast< Browse >( mode );
+		run.s.dwell    = 0.2;
+		run.s.readZoom = 12.0;
+		const std::vector< hand::View > views = hand::MakeViews( run.card, run.s.readZoom, run.s.screenW, run.s.screenH );
+		const double W = run.card.width, H = run.card.height;
+		double far = 0.0;
+		run.h.Advance( 0.0, run.s, run.card, run.bow, false, false );
+		for( int f = 0; f < 60 * 1500; ++f )
+		{
+			run.h.Advance( 1.0 / 60.0, run.s, run.card, run.bow, false, false );
+			const hand::State st = run.h.Now();
+			far = std::max( far, std::max( std::fabs( st.x - 0.5 * W ) / W, std::fabs( st.y - 0.5 * H ) / H ) );
+		}
+		int acts = 0, nearest = 0, inOrder = 0, steps = 0, last = -1;
+		for( const hand::Segment& g : run.h.Log() )
+			if( g.tag == hand::Tag::Primary )
+			{
+				++acts;
+				nearest += std::fabs( g.tx - g.ax ) <= 0.5 * W + 1e-9 && std::fabs( g.ty - g.ay ) <= 0.5 * H + 1e-9;
+				int view = -1;
+				for( size_t v = 0; v < views.size(); ++v )
+					if( std::fabs( reader::Wrap( g.tx - views[ v ].x + 0.5 * W, W ) - 0.5 * W ) < 1e-9
+					    && std::fabs( reader::Wrap( g.ty - views[ v ].y + 0.5 * H, H ) - 0.5 * H ) < 1e-9 )
+						view = static_cast< int >( v );
+				if( last >= 0 && view >= 0 )
+				{
+					++steps;
+					inOrder += ( view - last + static_cast< int >( views.size() ) ) % static_cast< int >( views.size() ) == 1;
+				}
+				last = view;
+			}
+		bool ok = acts >= 300 && nearest == acts && far >= 3.0;
+		std::string extra;
+		if( mode == static_cast< int >( Browse::Reading ) )
+		{
+			ok    = ok && inOrder == steps;
+			extra = fmt( "; %d of %d steps to the next view", inOrder, steps );
+		}
+		Check( ok, fmt( "endless, %s, 1500 s: %d acts, %d of them to the nearest copy of the view; the carriage went %.1f tiles "
+		                "from the first (bound 3)%s",
+		                InfoOf( PT_BROWSE ).options[ mode ], acts, nearest, far, extra.c_str() ) );
+	}
 	// The same seed browses the same way; another does not.
 	auto signature = [ & ]( uint32_t seed ) {
 		HandRun run( 14, 7, 0.3, seed, perturb.handHooks );
@@ -2465,6 +2515,161 @@ int runOperatorLaw( const Perturb& perturb )
 	};
 	const auto a = signature( 5 ), b = signature( 5 ), c = signature( 6 );
 	Check( a == b && a != c, fmt( "seed 5 twice: %s; seed 6: %s", a == b ? "identical" : "DIFFERENT", a != c ? "different" : "IDENTICAL" ) );
+	return Verdict();
+}
+
+//===========================================================================
+// --endless: the page has no edges. No header and no glass anywhere; across
+// a tile's seam the picture runs on unbroken -- the grid, the dust, the
+// scratches and the bow; the bow is periodic. (The operator's side of it,
+// the nearest copy of every view, is --operator-law's.)
+//===========================================================================
+int runEndless( const Perturb& perturb )
+{
+	std::printf( "\n=== endless: no header and no glass; the picture runs on across a tile's seam, grid, dust, scratches and bow\n"
+	             "    alike; the bow is periodic with the tile\n" );
+
+	// The bow, on the CPU: periodic with the tile to rounding, and not flat.
+	{
+		const reader::Card c = reader::MakeCard( 4, 3, 0.8, 16.0 / 9.0, true );
+		reader::Bow bow;
+		bow.Build( c, 0.4, 7 );
+		auto unitHash = []( uint32_t k ) { return ( Hash3( k, 0x656e646cu, 0x6573735fu ) >> 8 ) * ( 1.0 / 16777216.0 ); };
+		double worstX = 0.0, worstY = 0.0, lo = 1e9, hi = -1e9, worstSample = 0.0;
+		for( int k = 0; k < 4000; ++k )
+		{
+			const double x = ( unitHash( 0x1000u + k ) * 5.0 - 2.0 ) * c.width;
+			const double y = ( unitHash( 0x9000u + k ) * 5.0 - 2.0 ) * c.height;
+			const double h = bow.At( x, y );
+			worstX         = std::max( worstX, std::fabs( bow.At( x + c.width, y ) - h ) );
+			worstY         = std::max( worstY, std::fabs( bow.At( x, y - 2.0 * c.height ) - h ) );
+			lo             = std::min( lo, h );
+			hi             = std::max( hi, h );
+		}
+		for( int j = 0; j < bow.SampleHeight(); ++j )
+			for( int i = 0; i < bow.SampleWidth(); ++i )
+				worstSample = std::max( worstSample, std::fabs( bow.Samples()[ static_cast< size_t >( j ) * bow.SampleWidth() + i ] - bow.At( i, j ) ) );
+		Check( worstX <= 1e-12 && worstY <= 1e-12 && hi - lo >= 0.1 && worstSample <= 1e-6,
+		       fmt( "the bow on a %.1f x %.1f mm tile: |At( x + W ) - At( x )| %.2g, |At( y - 2H ) - At( y )| %.2g (bound 1e-12); "
+		            "it spans %.3f mm; the GPU's samples within %.2g of it",
+		            c.width, c.height, worstX, worstY, hi - lo, worstSample ) );
+	}
+
+	for( const Raster& raster : kRasters )
+	{
+		// No header and no glass: a black clip on silver film, zoomed right out
+		// at a tile's corner with the default title. Every pixel is the dye's,
+		// where the card shows its title and the glass round it.
+		{
+			const Floats black = flatCard( raster.w, raster.h, 0.0f, 0.0f, 0.0f );
+			int light[ 2 ] = { 0, 0 };
+			for( int layout = 0; layout < 2; ++layout )
+			{
+				Rig rig;
+				if( !startRig( rig, raster, black, perturb ) )
+					return 1;
+				rig.Set( PT_LAYOUT, static_cast< float >( layout ) );
+				rig.Set( PT_FILM, static_cast< float >( Film::Silver ) );
+				rig.plugin.SetTextParameter( PT_TITLE, kDefaultTitle );
+				const reader::Card c = cardOf( rig );
+				aim( rig, layout == 1 ? 0.0 : 0.5 * c.width, layout == 1 ? 0.0 : 0.0, reader::kMinZoom );
+				if( !rig.Render( 2 ) )
+					return 1;
+				const Floats out = rig.Output();
+				for( size_t i = 0; i < out.size(); i += 4 )
+					light[ layout ] += toLinear( out[ i ] ) > 0.05;
+			}
+			Check( light[ 1 ] == 0 && light[ 0 ] > 0,
+			       fmt( "%dx%d, a black clip at 2x: %d pixels show light on the endless page (bound 0); the card shows its title "
+			            "and glass in %d", raster.w, raster.h, light[ 1 ], light[ 0 ] ) );
+		}
+
+		// The seams. Two pictures of the same stretch of page, one each side of
+		// a tile's edge: the left half of the screen with the carriage AT the
+		// edge shows the page just before it, which is the right half of the
+		// screen with the carriage half a screen inside the tile. Likewise top
+		// and bottom. Dust, scratches and a bow; the knob set so both pictures
+		// focus alike (the Manual knob is measured from best focus at the
+		// screen's centre, which differs between the two).
+		// A smooth clip: the GPU filters a texture with a few bits of sub-texel
+		// weight (eight on most), and the two pictures reach a film point by
+		// different float sums, so on a hard texel edge a weight step of 1/256
+		// would be the whole difference. The page's own edges -- frames,
+		// gutters, dust, scratches -- are drawn by coverage, not filtering, and
+		// are what this compares.
+		Floats card( static_cast< size_t >( raster.w ) * raster.h * 4 );
+		for( int y = 0; y < raster.h; ++y )
+			for( int x = 0; x < raster.w; ++x )
+			{
+				const double u = ( x + 0.5 ) / raster.w, v = ( y + 0.5 ) / raster.h;
+				float* o       = &card[ ( static_cast< size_t >( y ) * raster.w + x ) * 4 ];
+				o[ 0 ]         = static_cast< float >( 0.5 + 0.4 * std::sin( 6.283185307179586 * 2.0 * u ) );
+				o[ 1 ]         = static_cast< float >( 0.5 + 0.4 * std::cos( 6.283185307179586 * 1.5 * v ) );
+				o[ 2 ]         = static_cast< float >( 0.3 + 0.6 * u * v );
+				o[ 3 ]         = 1.0f;
+			}
+		Rig rig;
+		if( !startRig( rig, raster, card, perturb ) )
+			return 1;
+		rig.Set( PT_LAYOUT, static_cast< float >( Layout::Endless ) );
+		rig.Set( PT_COLUMNS, 4.0f );
+		rig.Set( PT_ROWS, 3.0f );
+		rig.Set( PT_FILM, static_cast< float >( Film::Silver ) );
+		rig.Set( PT_DUST, 1.0f );
+		rig.Set( PT_SCRATCHES, 1.0f );
+		rig.Set( PT_FLATNESS, ParamFromFlatness( 0.5 ) );
+		const reader::Card c = cardOf( rig );
+		reader::Bow bow;
+		bow.Build( c, 0.5, static_cast< uint32_t >( IntegerOf( PT_SEED, rig.plugin.GetFloatParameter( PT_SEED ) ) ) );
+		constexpr double M = 6.0;
+		const double halfW = 0.5 * reader::kScreenWidth / M;
+		const double halfH = 0.5 * reader::kScreenWidth * raster.h / raster.w / M;
+		auto shoot = [ & ]( double x, double y, double knob, Floats& out ) {
+			aim( rig, x, y, M );
+			rig.Set( PT_FOCUS, ParamFromDefocus( knob ) );
+			if( !rig.Render( 2 ) )
+				return false;
+			out = rig.Output();
+			return true;
+		};
+		// The knob each picture needs so the page's focus is the same: the
+		// best focus at the first one's centre, read from the second's.
+		const double y0 = 0.37 * c.height, x0 = 0.41 * c.width;
+		Floats atEdge, inside, atTop, below;
+		if( !shoot( 0.0, y0, 0.0, atEdge ) || !shoot( c.width - halfW, y0, bow.At( 0.0, y0 ) - bow.At( c.width - halfW, y0 ), inside )
+		    || !shoot( x0, 0.0, 0.0, atTop ) || !shoot( x0, c.height - halfH, bow.At( x0, 0.0 ) - bow.At( x0, c.height - halfH ), below ) )
+			return 1;
+		double worstX = 0.0, worstY = 0.0, spread = 0.0;
+		for( int y = 0; y < raster.h; ++y )
+			for( int x = 0; x < raster.w / 2; ++x )
+				for( int ch = 0; ch < 3; ++ch )
+				{
+					const double a = toLinear( pixelTop( atEdge, raster.w, raster.h, x, y )[ ch ] );
+					const double b = toLinear( pixelTop( inside, raster.w, raster.h, x + raster.w / 2, y )[ ch ] );
+					worstX         = std::max( worstX, std::fabs( a - b ) );
+					spread         = std::max( spread, a );
+				}
+		for( int y = 0; y < raster.h / 2; ++y )
+			for( int x = 0; x < raster.w; ++x )
+				for( int ch = 0; ch < 3; ++ch )
+				{
+					const double a = toLinear( pixelTop( atTop, raster.w, raster.h, x, y )[ ch ] );
+					const double b = toLinear( pixelTop( below, raster.w, raster.h, x, y + raster.h / 2 )[ ch ] );
+					worstY         = std::max( worstY, std::fabs( a - b ) );
+				}
+		// The bound: the two pictures reach the same film point by different
+		// float sums (a carriage at the edge against one most of a tile
+		// along), so the point differs by a few float32 ULPs of the tile's
+		// width. An edge drawn by coverage (a frame, a particle, a scratch)
+		// moves by that over a footprint of one pixel, and changes the light
+		// by the film's contrast, base - dense, at most 0.85: four ULPs.
+		const double footprint = reader::kScreenWidth / M / raster.w;
+		const double kSeamTol  = 4.0 * c.width * std::ldexp( 1.0, -23 ) / footprint * 0.85;
+		Check( worstX <= kSeamTol && worstY <= kSeamTol && spread > 0.3,
+		       fmt( "%dx%d at 6x, a %.1f x %.1f mm tile with dust, scratches and a 0.5 mm bow: across the left/right seam the page "
+		            "differs by %.2g at worst, across the top/bottom seam by %.2g (bound %.2g; the picture reaches %.2f)",
+		            raster.w, raster.h, c.width, c.height, worstX, worstY, kSeamTol, spread ) );
+	}
 	return Verdict();
 }
 
@@ -2733,6 +2938,7 @@ const std::vector< CheckEntry >& checks()
 		{ "field", runField, false },       { "track", runTrack, false },       { "carriage", runCarriage, false },
 		{ "shutter", runShutter, false },   { "hunt", runHunt, false },         { "stock", runStock, false },
 		{ "screen", runScreen, false },     { "filmed", runFilmed, false },     { "sync", runSync, false },
+		{ "endless", runEndless, false },
 		{ "resize", runResize, false },     { "state", runState, false },       { "fitts", runFitts, true },
 		{ "operator-law", runOperatorLaw, true }, { "cues", runCues, true },    { "names", runNames, true },
 	};
@@ -2788,6 +2994,8 @@ int runNegative( bool offlineOnly = false )
 	add( "fitts", runFitts, "a cubic ease instead of minimum jerk", []( Perturb& p ) { p.handHooks = hand::kHookCubicProfile; } );
 	add( "fitts", runFitts, "endpoint scatter that ignores the distance", []( Perturb& p ) { p.handHooks = hand::kHookFlatScatter; } );
 	add( "operator-law", runOperatorLaw, "Searching only ever looks in the next half of the card", []( Perturb& p ) { p.handHooks = hand::kHookBiasedSearch; } );
+	add( "operator-law", runOperatorLaw, "on the endless page, the view on the first tile, not its nearest copy", []( Perturb& p ) { p.handHooks = hand::kHookFarImage; } );
+	add( "endless", runEndless, "the endless page not wrapped: the tile's edge, and glass beyond it", []( Perturb& p ) { p.hooks = kHookNoWrap; } );
 	add( "cues", runCues, "ramp every control between keys", []( Perturb& p ) { p.cuesRamp = true; } );
 
 	if( offlineOnly )

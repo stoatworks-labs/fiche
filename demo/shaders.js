@@ -166,9 +166,12 @@ uniform ivec2 Grid;      // columns, rows
 uniform vec2 FrameSize;  // mm
 uniform vec2 GridOrigin; // frame ( 0, 0 )'s top-left, mm
 uniform float Gutter;    // mm
-uniform vec2 CardSize;   // mm
+uniform vec2 CardSize;   // mm: the card, or one tile of the endless page
 uniform vec2 BowSize;    // samples
 uniform float HeaderHeight;
+uniform int Endless;     // 1: the page repeats the tile for ever, with no edges
+uniform vec2 DustCell;   // mm; on the endless page a whole number of them per tile
+uniform ivec2 DustCells; // ...and that number (0 on the card)
 
 uniform vec4 States[ 17 ];// the exposure: ( P.x, P.y, M, knob ), oldest first
 uniform int StateCount;
@@ -200,7 +203,6 @@ out vec4 fragColor;
 
 const int MAX_TAPS        = 32;
 const int MAX_STATES      = 17;
-const float DUST_CELL     = 0.5;  // mm
 const float SCRATCH_BAND  = 2.0;  // mm
 const float GLYPH_PX      = 0.8;  // mm per font pixel
 const float GLYPH_ADVANCE = 6.0;  // font pixels per character
@@ -220,9 +222,22 @@ const uint SALT_SCRATCH_W = 0x7363775fu;
 const uint SALT_GRAIN     = 0x67726169u;
 
 //--- the reader's geometry ----------------------------------------------------
+//Whether this frame's page is endless (and not, for a negative control, read
+//as if it were a card).
+bool endless()
+{
+	return Endless != 0 && ( Hooks & 2048 ) == 0;
+}
+
+//Where a point of the endless page falls on its tile.
+vec2 onTile( vec2 p )
+{
+	return p - CardSize * floor( p / CardSize );
+}
+
 float bowAt( vec2 p )
 {
-	vec2 st = ( clamp( p, vec2( 0.0 ), CardSize ) + 0.5 ) / BowSize;
+	vec2 st = ( ( endless() ? onTile( p ) : clamp( p, vec2( 0.0 ), CardSize ) ) + 0.5 ) / BowSize;
 	float h = textureLod( BowTex, st, 0.0 ).r;
 	return ( Hooks & 64 ) != 0 ? -h : h;
 }
@@ -343,20 +358,23 @@ float dustCover( vec2 p, float fp )
 {
 	if( TDust == 0u )
 		return 0.0;
-	ivec2 cell = ivec2( floor( p / DUST_CELL ) );
+	ivec2 cell = ivec2( floor( p / DustCell ) );
+	if( endless() )
+		cell = min( cell, DustCells - 1 );
 	uint key   = pack2( cell + ivec2( 4096 ) );
 	if( hash3( key, Seed, SALT_DUST ) >= TDust )
 		return 0.0;
 	float a      = 0.008 + 0.037 * unit( hash3( key, Seed, SALT_DUST_R ) );
 	vec2 jitter  = vec2( unit( hash3( key, Seed, SALT_DUST_X ) ), unit( hash3( key, Seed, SALT_DUST_Y ) ) );
-	vec2 centre  = ( vec2( cell ) + 0.5 + ( jitter - 0.5 ) * ( 1.0 - 2.0 * a / DUST_CELL ) ) * DUST_CELL;
+	vec2 centre  = ( vec2( cell ) + 0.5 + ( jitter - 0.5 ) * ( 1.0 - 2.0 * a / DustCell ) ) * DustCell;
 	float r      = max( a, 0.5 * fp );
 	float weight = ( a / r ) * ( a / r );
 	return weight * clamp( ( r - length( p - centre ) ) / fp + 0.5, 0.0, 1.0 );
 }
 
 //A scratch through the emulsion, along the card (the way it slides into the
-//carrier): clear base where there was image.
+//carrier): clear base where there was image. On the endless page, as on a roll
+//of film, a scratch runs the whole length.
 float scratchCover( vec2 p, float fp )
 {
 	if( TScratch == 0u )
@@ -370,7 +388,7 @@ float scratchCover( vec2 p, float fp )
 	float len       = 10.0 + 90.0 * unit( hash3( key, Seed, SALT_SCRATCH_L ) );
 	float w         = 0.004 + 0.010 * unit( hash3( key, Seed, SALT_SCRATCH_W ) );
 	float halfWidth = 0.5 * max( w, fp );
-	float along     = coverage( p, vec2( x0, 0.0 ), vec2( x0 + len, 0.0 ), fp ).x;
+	float along     = endless() ? 1.0 : coverage( p, vec2( x0, 0.0 ), vec2( x0 + len, 0.0 ), fp ).x;
 	return ( w / max( w, fp ) ) * along * clamp( ( halfWidth - abs( p.y - y ) ) / fp + 0.5, 0.0, 1.0 );
 }
 
@@ -379,8 +397,15 @@ float scratchCover( vec2 p, float fp )
 vec3 transmit( vec2 p, float fp, vec2 s )
 {
 	//Off the card there is only the carrier's glass: the lamp, straight through.
-	vec2 inside = coverage( p, vec2( 0.0 ), CardSize, fp );
-	float onCard = inside.x * inside.y;
+	//The endless page has no off: every point is its tile's.
+	float onCard = 1.0;
+	if( endless() )
+		p = onTile( p );
+	else
+	{
+		vec2 inside = coverage( p, vec2( 0.0 ), CardSize, fp );
+		onCard      = inside.x * inside.y;
+	}
 	if( onCard <= 0.0 )
 		return vec3( 1.0 );
 	vec3 e = exposure( p, fp );
