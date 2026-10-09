@@ -23,8 +23,12 @@ edge are going past, smeared by the move and soft from a zoom that does not hold
 > duration is Fitts's law and its profile minimum jerk; the hunt turns where a reaction time
 > puts it, and the picture's blur follows the knob. All 33 controls measurably change the picture.
 > It has **never been loaded into Resolume on macOS**. The one host it has run in on a Mac is the
-> fleet's own test host, `oxbow`, for 120 frames. **The Windows build has not been loaded into
-> Resolume either.**
+> fleet's own test host, `oxbow`, for 120 frames.
+> On Windows, a build of v0.1.0 loads, registers and renders in Resolume Arena 7.27.1, with every
+> control matching what the plugin declares — on software rendering, so that says nothing about a
+> GPU. The six controls that steer the operator over seconds (Hand Speed, Accuracy, Crash Zoom,
+> Focus Skill, Carriage Play, Parfocal) could not be shown moving there, because the operator moves
+> the picture between the test's grabs.
 > Try it on a spare layer before you put it in a show.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human author.
@@ -353,7 +357,8 @@ It records the GL vendor and version at load, and which shader failed if one did
 ## Known limits
 
 - **Never loaded into Resolume on macOS**, and nothing has driven the controls in a host on a
-  Mac. How 33 controls in five groups read in the inspector is untested there.
+  Mac. How 33 controls in five groups read in the inspector is untested there. On Windows the
+  only host run is the fleet's automated gate in Arena 7.27.1, on software rendering.
 - **The laws are real; the person is not.** Fitts's law, minimum-jerk movement, scatter in
   proportion to distance and corrective submovements are the motor-control literature's, but the
   constants are typical, not one person's, and the hunt's rule is a model of a person, not a

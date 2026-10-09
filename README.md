@@ -11,8 +11,8 @@
 > every pan's duration is Fitts's law and its profile minimum jerk; the hunt turns where
 > a reaction time puts it and the picture's blur follows the knob frame by frame; a black
 > clip stays black at 75× — with 23 negative controls and 11 one-character mutants that
-> prove the checks can fail. It has **never been loaded into Resolume**, on either
-> platform, and Windows has never been built. See [Status](#status).
+> prove the checks can fail. It has **never been loaded into Resolume on macOS**.
+> On Windows, a build of v0.1.0 loads, registers and renders in Resolume Arena 7.27.1 with all 39 host controls as declared, on software rendering. See [Status](#status).
 
 Browsing a microfiche reader, as an FFGL effect for [Resolume](https://resolume.com)
 Arena and Avenue.
@@ -139,9 +139,21 @@ macOS figures only.
 
 ### Not established
 
-It has **never been loaded into Resolume**, on macOS or on Windows, and **Windows has
-never been built**. Everything above was compiled, rendered and measured offline
-against the real plugin class in a headless CGL context, plus an `oxbow` load.
+It has **never been loaded into Resolume on macOS**. Everything above was compiled,
+rendered and measured offline against the real plugin class in a headless CGL
+context, plus an `oxbow` load. How 33 controls read in Arena's inspector, and how
+the operator feels to somebody who has sat at a real reader, are untested.
+
+**Windows, in Resolume Arena 7.27.1** (win-lab, Mesa llvmpipe, no GPU, 2026-10-09): a
+build of this source loads from Extra Effects, registers as `SW Fiche` / `MF01` /
+effect, all 39 host controls match the declaration in name, order, type, range and
+default, it renders, and Arena's log stays clean: 9 of 9 of the fleet gate's checks.
+26 of the 32 controls it can move changed the picture (31 under a precondition) and
+none read dead; the six that steer the operator over seconds — Hand Speed, Accuracy,
+Crash Zoom, Focus Skill, Carriage Play and Parfocal — were inconclusive, because the
+gate compares single grabs and the Auto operator moves the picture between them;
+`tools/sweep.py` proves all six on a fixed seed. Software rendering says nothing about
+a GPU or about speed.
 
 The laws the hand follows are the motor-control literature's (Fitts; Flash and Hogan;
 Harris and Wolpert; Elliott, Helsen and Chua), but the constants are typical, not one

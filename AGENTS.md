@@ -312,8 +312,13 @@ the motor-control literature's — Fitts 1954, Flash and Hogan 1985, Harris and
 Wolpert 1998, Elliott et al. 2001 — but the constants are typical, not one person's,
 and the hunt's rule is a model of a person, not a measurement of one); the film
 stocks' densities and dye colours (typical, not a datasheet's); the 0.4 mm acceptable
-blur; the lens's 2–75× range (a stretch). **Never loaded into Resolume**, on either
-platform. Windows has never been built. No OpenFX port and no browser demo.
+blur; the lens's 2–75× range (a stretch). **Never loaded into Resolume on macOS.**
+On Windows the fleet's Arena gate passed 9 of 9 on Arena 7.27.1 (llvmpipe, 2026-10-09;
+expectation `plugin-bench/arena/expect/fiche.json`, drafted by `mftest --expect`): 26
+of 32 controls moved its picture, 31 under a precondition, none dead, and the six that
+steer the operator over seconds (Hand Speed, Accuracy, Crash Zoom, Focus Skill,
+Carriage Play, Parfocal) were inconclusive on single grabs of a moving reader, as the
+expectation's notes say. No OpenFX port and no browser demo.
 
 ## Open design questions
 

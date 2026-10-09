@@ -101,7 +101,8 @@ table (`Controls.cpp`).
   `build_guides.py fiche`, from `docs/USER-GUIDE.md`, the only copy anyone edits).
 
 ## Not done yet
-- Never loaded into Resolume, on either platform; Windows never built.
+- Never loaded into Resolume on macOS. On Windows only the fleet's Arena gate
+  (9/9 on Arena 7.27.1, llvmpipe, 2026-10-09).
 - No OpenFX port, no browser demo.
 
 ## Diagnostics
