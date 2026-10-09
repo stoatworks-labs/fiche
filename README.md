@@ -109,6 +109,17 @@ None of these is drawn. Each is the hand or the reader doing what it does:
 With `Operator` on Manual the hand is yours: `Position X/Y`, `Zoom` and `Focus`, still
 through the carriage's grip, the lens's blur and the screen.
 
+[![Fiche — browsing a microfiche reader, for Resolume](docs/video-thumb.png)](https://www.youtube.com/watch?v=nHf3HR3aDns)
+
+*[Watch it](https://www.youtube.com/watch?v=nHf3HR3aDns) — 65 seconds: the defaults' operator
+skimming and searching a card at 24×, the zoom pulled right out to the whole card, searching with
+every long move a crash zoom, a poor focuser hunting on a badly bowed card at f/2, a loose
+carriage bouncing under a fast hand, diazo blue and vesicular film, the step-and-repeat camera
+filling a blank card in reading order, and a close-up at 40× with dust and scratches under a warm
+lamp. Every frame is the real plugin's output: an FFGL plugin has no window, so the footage is
+rendered by this repository's own offline harness (`mftest --pipe`, driven by a cue sheet) rather
+than filmed off a screen, and the clips are Resolume's bundled demo media.*
+
 ## Controls
 
 | Group | |
