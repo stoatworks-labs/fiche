@@ -1,0 +1,23 @@
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' https://intake.stoatworks-labs.com; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+
+# 'wasm-unsafe-eval' is load-bearing and is this demo's only addition to its
+# siblings' policy: the plugin runs as WebAssembly, and a script-src without it
+# refuses to compile the module -- in PRODUCTION ONLY, because a local dev
+# server does not apply this file. It permits compiling WebAssembly and nothing
+# else; eval and new Function stay blocked (the module is built with
+# DYNAMIC_EXECUTION=0 and needs neither).
+#
+# media-src blob: is load-bearing: dropping in your own video makes an object URL
+# for it.
+#
+# connect-src lists the intake origin, and that is not optional even though the
+# demo itself never calls out: the shared support footer carries a "Report a bug
+# or send feedback" button that POSTs there. With a bare `connect-src 'self'` the
+# report is refused. The .wasm is fetched from 'self'.
+
+/vendor/*
+  Cache-Control: public, max-age=3600
