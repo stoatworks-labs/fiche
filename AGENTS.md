@@ -195,6 +195,12 @@ keeps a copy of a synced dwell taken before a beat ends it (the log is now told)
 
 **`Hand::Now()` before the first frame** read an empty ring and crashed the harness.
 
+**A pointer into a temporary picture dangles.** `pixelTop( rig.Output(), … )` kept a
+pointer into the vector `Output()` returns by value, which dies at the end of the line;
+`--stock` read its gutter after another Render had reused the memory and failed about one
+run in five when four ran at once (found by the demo's sub-agent, 2026-10-09). Keep the
+picture in a named `Floats` first; no other check does it.
+
 **A smear of a pixel font is banded, correctly.** A 111 px box blur of glyphs made
 of 20 px font pixels steps at every font-pixel column; it looked like a tap artefact
 and is not (enlarged, the smear is smooth). A wider prefilter was tried and reverted.
@@ -319,7 +325,7 @@ expectation `plugin-bench/arena/expect/fiche.json`, drafted by `mftest --expect`
 of 32 controls moved its picture, 31 under a precondition, none dead, and the six that
 steer the operator over seconds (Hand Speed, Accuracy, Crash Zoom, Focus Skill,
 Carriage Play, Parfocal) were inconclusive on single grabs of a moving reader, as the
-expectation's notes say. No OpenFX port and no browser demo.
+expectation's notes say. No OpenFX port; the browser demo is below.
 
 ## The browser demo (2026-10-09)
 

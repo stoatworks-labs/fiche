@@ -203,8 +203,8 @@ Harris and Wolpert; Elliott, Helsen and Chua), but the constants are typical, no
 person's, and the hunt is a model of a person, not a measurement of one. The film
 stocks' densities and dyes are typical, not a datasheet's. A real reader's zoom covers
 about 2:1; this lens's 2×–75× is a deliberate stretch so a crash zoom can reach the
-whole card. There is a [user guide](docs/USER-GUIDE.md); no OpenFX port and no
-browser demo.
+whole card. There is a [user guide](docs/USER-GUIDE.md) and a
+[browser demo](#browser-demo); no OpenFX port.
 
 ## Build
 

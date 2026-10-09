@@ -1970,13 +1970,18 @@ int runStock( const Perturb& perturb )
 			aim( rig, c.FrameLeft( 0 ) + c.frameW + 0.5 * c.gutter, c.FrameTop( 0 ) + 0.5 * c.frameH, 20.0 );
 			if( !rig.Render( 2 ) )
 				return 1;
-			const float* gutter = pixelTop( rig.Output(), raster.w, raster.h, raster.w / 2, raster.h / 2 );
+			// Each picture is kept by name: pixelTop points INTO it, and a
+			// pointer into rig.Output()'s temporary dangles once the line ends
+			// (a later Render reused the memory, and the check read garbage).
+			const Floats gutterPicture = rig.Output();
+			const float* gutter        = pixelTop( gutterPicture, raster.w, raster.h, raster.w / 2, raster.h / 2 );
 			// The carriage cannot leave the card, so put its edge at the
 			// screen's centre and look a quarter of the screen to its left.
 			aim( rig, 0.0, c.FrameTop( 0 ) + 0.5 * c.frameH, 20.0 );
 			if( !rig.Render( 2 ) )
 				return 1;
-			const float* glass = pixelTop( rig.Output(), raster.w, raster.h, raster.w / 4, raster.h / 2 );
+			const Floats glassPicture = rig.Output();
+			const float* glass        = pixelTop( glassPicture, raster.w, raster.h, raster.w / 4, raster.h / 2 );
 			double gutterErr = 0.0, glassErr = 0.0;
 			for( int ch = 0; ch < 3; ++ch )
 			{

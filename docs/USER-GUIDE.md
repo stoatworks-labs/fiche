@@ -371,7 +371,12 @@ It records the GL vendor and version at load, and which shader failed if one did
   letterboxed in a portrait page would waste the screen.
 - **4K costs more than half a 60 fps frame** (see Performance).
 - **No presets**, no audio input (Resolume can drive any control from audio, and Sync takes the
-  beat), no browser demo and no OpenFX version.
+  beat), and no OpenFX version.
+- **There is a browser demo** at [fiche-demo.stoatworks-labs.com](https://fiche-demo.stoatworks-labs.com).
+  It runs the plugin itself, compiled to WebAssembly and drawing with its own shaders in WebGL2,
+  not a port of it. The page is the host: it sends no beat (Sync keeps the plugin's own 120 BPM),
+  its clock is the browser's, and six GL calls are translated for WebGL2. The page lists
+  everything it does not reproduce.
 
 ---
 
