@@ -14,7 +14,7 @@ harness rather than captured from Resolume. Thirteen and a half seconds in, the 
 zoomed out to travel to another frame: the card's corner, its header and the glass beyond its
 edge are going past, smeared by the move and soft from a zoom that does not hold focus.*
 
-> **Before you rely on this:** released at **v0.1.0**, and honestly early. The reader and the
+> **Before you rely on this:** released at **v0.2.0**, and honestly early. The reader and the
 > hand are measured rather than asserted, by a harness that drives the real plugin class: a
 > perfect reader showing one frame gives back the clip; a point out of focus becomes a uniform
 > disc of the radius geometric optics gives, to under 1%, and keeps its light; the card's bow,
@@ -29,8 +29,8 @@ edge are going past, smeared by the move and soft from a zoom that does not hold
 > GPU. The six controls that steer the operator over seconds (Hand Speed, Accuracy, Crash Zoom,
 > Focus Skill, Carriage Play, Parfocal) could not be shown moving there, because the operator moves
 > the picture between the test's grabs.
-> **Layout** (the endless page) is newer than v0.1.0: it is in the source and arrives with the
-> next release, so the v0.1.0 download does not have it.
+> **Layout** (the endless page) is new in v0.2.0. It is measured offline like everything else,
+> but the Windows run above was of v0.1.0, before Layout existed, so no Resolume has shown it yet.
 > Try it on a spare layer before you put it in a show.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human author.

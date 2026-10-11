@@ -144,9 +144,8 @@ to travel more often than not, and is not good at focusing.
 
 ## Status
 
-**v0.1.0, and honestly early — 8 October 2026.** `Layout` (the endless page) was
-added on 9 October and is in this source, not yet in a release: the downloads above
-are v0.1.0 without it.
+**v0.2.0, and honestly early — 11 October 2026.** v0.2.0 adds `Layout` (the endless
+page); v0.1.0, released on 8 October, did not have it.
 
 ### Measured offline, on macOS
 
