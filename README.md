@@ -29,15 +29,15 @@ by the move and soft from a zoom that does not hold focus.</sub>
 
 ## Download
 
-**[v0.1.0](https://github.com/stoatworks-labs/fiche/releases/tag/v0.1.0)** — prebuilt for macOS and Windows. Pick your platform:
+**[v0.2.0](https://github.com/stoatworks-labs/fiche/releases/tag/v0.2.0)** — prebuilt for macOS and Windows. Pick your platform:
 
 <details>
 <summary><b>macOS</b> — Universal (Apple Silicon + Intel)</summary>
 
 | Build | Download | Size |
 | --- | --- | --- |
-| Universal (Apple Silicon + Intel) · .dmg disk image | [`fiche-0.1.0-macos-universal.dmg`](https://github.com/stoatworks-labs/fiche/releases/download/v0.1.0/fiche-0.1.0-macos-universal.dmg) | 274 KB |
-| Universal (Apple Silicon + Intel) · .zip archive | [`fiche-macos-universal.zip`](https://github.com/stoatworks-labs/fiche/releases/latest/download/fiche-macos-universal.zip) | 230 KB |
+| Universal (Apple Silicon + Intel) · .dmg disk image | [`fiche-0.2.0-macos-universal.dmg`](https://github.com/stoatworks-labs/fiche/releases/download/v0.2.0/fiche-0.2.0-macos-universal.dmg) | 278 KB |
+| Universal (Apple Silicon + Intel) · .zip archive | [`fiche-macos-universal.zip`](https://github.com/stoatworks-labs/fiche/releases/latest/download/fiche-macos-universal.zip) | 234 KB |
 
 </details>
 
@@ -46,8 +46,8 @@ by the move and soft from a zoom that does not hold focus.</sub>
 
 | Build | Download | Size |
 | --- | --- | --- |
-| x64 · .exe installer | [`fiche-0.1.0-windows-x86_64-setup.exe`](https://github.com/stoatworks-labs/fiche/releases/download/v0.1.0/fiche-0.1.0-windows-x86_64-setup.exe) | 240 KB |
-| x64 · .zip archive | [`fiche-windows-x86_64.zip`](https://github.com/stoatworks-labs/fiche/releases/latest/download/fiche-windows-x86_64.zip) | 134 KB |
+| x64 · .exe installer | [`fiche-0.2.0-windows-x86_64-setup.exe`](https://github.com/stoatworks-labs/fiche/releases/download/v0.2.0/fiche-0.2.0-windows-x86_64-setup.exe) | 243 KB |
+| x64 · .zip archive | [`fiche-windows-x86_64.zip`](https://github.com/stoatworks-labs/fiche/releases/latest/download/fiche-windows-x86_64.zip) | 135 KB |
 
 </details>
 
