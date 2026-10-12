@@ -1,29 +1,25 @@
 # fiche
 
 > **AI-assisted project.** This codebase was created with [Claude](https://claude.com/claude-code)
-> (Anthropic), directed and reviewed by a human author. The behaviour is not asserted
-> but measured: an offline harness drives the real plugin class in a headless GL
-> context and checks each claim — a point out of focus is a uniform disc of the radius
-> geometric optics gives, to under 1%, and keeps its light; the card's bow, read back
-> out of the picture, is the model's to 0.0003 mm; the picture is where the hand model
-> puts the carriage through pans, corrections and crash zooms; the carriage on its grip
-> is the second-order step response to 2e-11 mm against an independent integration;
-> every pan's duration is Fitts's law and its profile minimum jerk; the hunt turns where
-> a reaction time puts it and the picture's blur follows the knob frame by frame; a black
-> clip stays black at 75× — with 25 negative controls and 13 one-character mutants that
-> prove the checks can fail. It has **never been loaded into Resolume on macOS**.
-> On Windows, a build of v0.1.0 loads, registers and renders in Resolume Arena 7.27.1 with all 39 host controls as declared, on software rendering. See [Status](#status).
+> (Anthropic), directed and reviewed by a human author. Its behaviour is measured rather
+> than asserted, by an offline harness that drives the plugin's own class in a headless GL
+> context, with 25 negative controls and 13 one-character mutants that prove the checks can
+> fail. It's **never been loaded into Resolume on macOS**. On Windows, a build of v0.1.0
+> loads, registers and renders in Resolume Arena 7.27.1 with all 39 host controls as
+> declared, on software rendering. The full rundown is under [Status](#status).
 
-Browsing a microfiche reader, as an FFGL effect for [Resolume](https://resolume.com)
-Arena and Avenue.
+Your clip on a microfiche card, browsed on a reader by somebody in a hurry, as an FFGL
+effect for [Resolume](https://resolume.com) Arena and Avenue. Whip pans, crash zooms and a
+focus knob that hunts before it settles: everything that made the library reading room
+such a joy.
 
 ![A crash zoom out to the top right corner of a microfiche card: the eye-readable header CARD 1 OF 1, a grid of frames each holding the clip, the clear glass of the reader beyond the card's edge, and the whole picture still smeared and soft from the zoom](docs/hero.png)
 
-<sub>One frame, rendered by `mftest`, the offline harness — not captured from
-Resolume. Resolume's bundled `IntoTheGlow_02` on the defaults, thirteen and a half
+<sub>One frame, rendered by `mftest` (the offline harness) rather than captured from
+Resolume. It's Resolume's bundled `IntoTheGlow_02` on the defaults, thirteen and a half
 seconds in: the operator has zoomed out to travel to another frame, and the card's
 corner, its header and the glass of the carrier beyond it are going past, smeared
-by the move and soft from a zoom that does not hold focus.</sub>
+by the move and soft from a zoom that doesn't hold focus.</sub>
 
 <!-- downloads:start -->
 
@@ -62,21 +58,21 @@ macOS builds are signed and notarised and open normally. The Windows builds are 
 **A microfiche reader magnifies a hand.**
 
 The screen shows about a centimetre of film at 24×, so every movement of the hand on
-the carriage, every flick of the zoom and every turn of the focus knob arrives on the
-screen multiplied by twenty-four. A hand's comfortable 50 mm a second is a metre a
+the carriage, every flick of the zoom and every turn of the focus knob shows up on the
+screen twenty-four times over. A comfortable 50 mm a second for the hand is a metre a
 second across the screen.
 
-So the plugin is the hand and the reader:
+So the plugin is both the hand and the reader:
 
 - **the hand** makes aimed movements that obey Fitts's law, follow a minimum-jerk
   profile, land a little short with a scatter in proportion to how far they went, and
-  are corrected when they miss; it zooms out to travel and back in to read; and it
-  hunts for focus — turning the knob past sharp, noticing a reaction time later,
+  get corrected when they miss. It zooms out to travel and back in to read, and it
+  hunts for focus, turning the knob past sharp, noticing a reaction time later and
   turning back slower;
 - **the carriage** is a mass on the hand's grip, so a fast pan stopped hard overshoots
   and settles, against end stops at the card's edges;
 - **the reader** is a projection lens of magnification M and f-number N whose blur
-  circle is geometric optics, a zoom that does not hold focus, a card that is not flat
+  circle is geometric optics, a zoom that doesn't hold focus, a card that isn't flat
   between its glass plates, a lamp, and a rear-projection screen with a hotspot and a
   grain of its own;
 - **the film** is the clip printed in a grid of frames on silver, diazo or vesicular
@@ -84,47 +80,47 @@ So the plugin is the hand and the reader:
 
 ## What falls out
 
-None of these is drawn. Each is the hand or the reader doing what it does:
+None of this is painted on. It's all the hand or the reader doing what they do:
 
 - **Whip pans.** Magnification turns an ordinary hand movement into a smear across
-  the screen — integrated over the exposure, so the faster the pan the longer the
+  the screen. It's integrated over the exposure, so the faster the pan, the longer the
   smear.
 - **Overshoot and correction.** A long move lands short or long by a few percent of
-  itself, which at 24× is a good part of a frame; the operator sees it and corrects
+  itself, which at 24× is a good chunk of a frame, so the operator sees it and corrects
   with a second, smaller move. A carriage with play bounces when it stops.
-- **Crash zooms.** To go far, the operator zooms out until the target is on screen,
-  pans there — a wide view needs less precision, so the pan is quicker and rougher —
-  and crashes back in. The zoom is not parfocal, so the wide view is soft, and the
-  magnification it lands on is not quite the one it left.
-- **The hunt.** On arrival the picture is soft — the card is bowed, so every frame
-  is at a slightly different height. The knob goes past sharp, back, past again by
-  less, and stops. A higher magnification has a shallower depth of focus and hunts
-  longer; a poor operator starts the wrong way.
-- **Soft corners.** The bow varies across the screen, so a picture sharp in the
+- **Crash zooms.** To go a long way, the operator zooms out until the target's on
+  screen, pans there (a wide view needs less precision, so the pan's quicker and
+  rougher) and crashes back in. The zoom isn't parfocal, so the wide view is soft, and
+  the magnification it lands on isn't quite the one it left.
+- **The hunt.** On arrival the picture's soft, because the card is bowed and every
+  frame sits at a slightly different height. The knob goes past sharp, back, past again
+  by less, and stops. A higher magnification has a shallower depth of focus and hunts
+  for longer, and a poor operator starts off the wrong way.
+- **Soft corners.** The bow varies across the screen, so a picture that's sharp in the
   middle is never quite sharp at the edges.
-- **The card itself.** Zoomed out: the grid of frames, the gutters, the header with
-  its title, and beyond the card's edge only the reader's bright glass. Dust and
-  scratches ride with the card; the screen's grain and its hotspot stay put.
+- **The card itself.** Zoomed out, you get the grid of frames, the gutters, the header
+  with its title, and beyond the card's edge nothing but the reader's bright glass.
+  Dust and scratches ride with the card; the screen's grain and its hotspot stay put.
 - **Or an endless page.** With `Layout` on Endless the header, the margins and the
-  glass go: the grid of frames repeats for ever in every direction, the carriage has
+  glass go. The grid of frames repeats for ever in every direction, the carriage has
   no end stops, and the operator goes to the nearest copy of each view, so it reads
   on to the right and down for as long as the clip plays. The bow, the dust and the
   filmed frames repeat with the tile, so the page has no seam, and a scratch runs its
-  whole length, as on a roll of film.
+  whole length, as it would on a roll of film.
 
-With `Operator` on Manual the hand is yours: `Position X/Y`, `Zoom` and `Focus`, still
-through the carriage's grip, the lens's blur and the screen.
+With `Operator` on Manual, the hand is yours: `Position X/Y`, `Zoom` and `Focus`, still
+going through the carriage's grip, the lens's blur and the screen.
 
 [![Fiche — browsing a microfiche reader, for Resolume](docs/video-thumb.png)](https://www.youtube.com/watch?v=nHf3HR3aDns)
 
-*[Watch it](https://www.youtube.com/watch?v=nHf3HR3aDns) — 65 seconds: the defaults' operator
+*[Watch it](https://www.youtube.com/watch?v=nHf3HR3aDns) (65 seconds): the defaults' operator
 skimming and searching a card at 24×, the zoom pulled right out to the whole card, searching with
 every long move a crash zoom, a poor focuser hunting on a badly bowed card at f/2, a loose
 carriage bouncing under a fast hand, diazo blue and vesicular film, the step-and-repeat camera
 filling a blank card in reading order, and a close-up at 40× with dust and scratches under a warm
-lamp. Every frame is the real plugin's output: an FFGL plugin has no window, so the footage is
-rendered by this repository's own offline harness (`mftest --pipe`, driven by a cue sheet) rather
-than filmed off a screen, and the clips are Resolume's bundled demo media.*
+lamp. It's all the plugin's own output. An FFGL plugin doesn't have a window to film, so the
+footage comes from this repo's offline harness (`mftest --pipe`, driven by a cue sheet) rather
+than a screen recording, and the clips are Resolume's bundled demo media.*
 
 ## Controls
 
@@ -138,20 +134,20 @@ than filmed off a screen, and the clips are Resolume's bundled demo media.*
 
 The defaults are somebody in a library reading room going through a card in a hurry:
 a 14 × 7 card of the clip on silver film, read at 24× through an f/2.8 lens whose
-zoom does not hold focus, the card bowed 0.3 mm between plates that no longer close,
-a carriage with some give in it, and an operator who skims and searches, zooms out
-to travel more often than not, and is not good at focusing.
+zoom doesn't hold focus, the card bowed 0.3 mm between plates that don't close any
+more, a carriage with some give in it, and an operator who skims and searches, zooms
+out to travel more often than not, and isn't good at focusing.
 
 ## Status
 
-**v0.2.0, and honestly early — 11 October 2026.** v0.2.0 adds `Layout` (the endless
-page); v0.1.0, released on 8 October, did not have it.
+**v0.2.0, 11 October 2026, and still early days.** v0.2.0 adds `Layout` (the endless
+page); v0.1.0, released on 8 October, didn't have it.
 
 ### Measured offline, on macOS
 
-`tools/verify.sh` passes on this machine (Apple Silicon, macOS 26) against a fresh
-universal Release build, running every check at **two rasters**, 1280×720 and 320×180,
-and again on **Apple's software renderer** at 320×180. What it establishes:
+`tools/verify.sh` passes on this Mac (Apple Silicon, macOS 26) against a fresh
+universal Release build. It runs every check at two rasters, 1280×720 and 320×180,
+and again on Apple's software renderer at 320×180. Here's what it shows:
 
 | check | result |
 | --- | --- |
@@ -179,44 +175,43 @@ and again on **Apple's software renderer** at 320×180. What it establishes:
 | shaders | all 6 compile through `glslc`, not merely through Apple's driver |
 | the bundle | universal (`x86_64 arm64`), exports `plugMain`, ad-hoc signs; `oxbow` reports `SW Fiche` / `MF01` / `effect` and renders 120 frames through `plugMain` |
 
-Render cost, GPU time by `GL_TIME_ELAPSED`, median of 120 frames after a warm-up, on a
-GPU shared with other work:
-at the defaults, with the operator browsing, **1.27 ms** at 720p, **2.40 ms** at 1080p and
-**9.09 ms** at 4K; with every pixel taking all 32 taps (a millimetre out of focus and
-panning), **1.46**, **2.75** and **10.05 ms**; filming a frame every 0.05 s, **1.35**,
-**2.59** and **9.65 ms**. At 4K that is more than half of a 60 fps frame: the taps
-scale with the pixels, and nothing yet trades taps for resolution.
-macOS figures only.
+Render cost is GPU time by `GL_TIME_ELAPSED`, the median of 120 frames after a warm-up,
+on a GPU shared with other work. At the defaults, with the operator browsing, it's
+**1.27 ms** at 720p, **2.40 ms** at 1080p and **9.09 ms** at 4K; with every pixel taking
+all 32 taps (a millimetre out of focus and panning), **1.46**, **2.75** and **10.05 ms**;
+filming a frame every 0.05 s, **1.35**, **2.59** and **9.65 ms**. At 4K that's more than
+half of a 60 fps frame. The taps scale with the pixels, and nothing trades taps for
+resolution yet. These are macOS figures only.
 
 ### Not established
 
-It has **never been loaded into Resolume on macOS**. Everything above was compiled,
-rendered and measured offline against the real plugin class in a headless CGL
-context, plus an `oxbow` load. How 34 controls read in Arena's inspector, and how
-the operator feels to somebody who has sat at a real reader, are untested.
+It's **never been loaded into Resolume on macOS**. Everything above was compiled,
+rendered and measured offline against the plugin's own class in a headless CGL
+context, plus an `oxbow` load. I haven't tested how the 34 controls read in Arena's
+inspector, or how the operator feels to somebody who's sat at an actual reader.
 
 **Windows, in Resolume Arena 7.27.1** (win-lab, Mesa llvmpipe, no GPU, 2026-10-09): a
-build of v0.1.0 — before `Layout` was added — loads from Extra Effects, registers as `SW Fiche` / `MF01` /
-effect, all 39 host controls match the declaration in name, order, type, range and
-default, it renders, and Arena's log stays clean: 9 of 9 of the fleet gate's checks.
-26 of the 32 controls it can move changed the picture (31 under a precondition) and
-none read dead; the six that steer the operator over seconds — Hand Speed, Accuracy,
-Crash Zoom, Focus Skill, Carriage Play and Parfocal — were inconclusive, because the
-gate compares single grabs and the Auto operator moves the picture between them;
-`tools/sweep.py` proves all six on a fixed seed. Software rendering says nothing about
-a GPU or about speed.
+build of v0.1.0, from before `Layout` was added, loads from Extra Effects, registers as
+`SW Fiche` / `MF01` / effect, all 39 host controls match the declaration in name, order,
+type, range and default, it renders, and Arena's log stays clean. That's 9 of 9 of the
+fleet gate's checks. 26 of the 32 controls it can move changed the picture (31 under a
+precondition) and none read dead. The six that steer the operator over seconds (Hand
+Speed, Accuracy, Crash Zoom, Focus Skill, Carriage Play and Parfocal) came out
+inconclusive, because the gate compares single grabs and the Auto operator moves the
+picture between them; `tools/sweep.py` proves all six on a fixed seed. Software
+rendering tells you nothing about a GPU or about speed.
 
-The laws the hand follows are the motor-control literature's (Fitts; Flash and Hogan;
-Harris and Wolpert; Elliott, Helsen and Chua), but the constants are typical, not one
-person's, and the hunt is a model of a person, not a measurement of one. The film
-stocks' densities and dyes are typical, not a datasheet's. A real reader's zoom covers
-about 2:1; this lens's 2×–75× is a deliberate stretch so a crash zoom can reach the
-whole card. There is a [user guide](docs/USER-GUIDE.md) and a
-[browser demo](#browser-demo); no OpenFX port.
+The laws the hand follows come from the motor-control literature (Fitts; Flash and
+Hogan; Harris and Wolpert; Elliott, Helsen and Chua), but the constants are typical
+ones rather than any one person's, and the hunt is a model of a person, not a
+measurement of one. The film stocks' densities and dyes are typical too, not off a
+datasheet. An actual reader's zoom covers about 2:1; this lens's 2×–75× is a stretch
+on purpose, so a crash zoom can reach the whole card. There's a
+[user guide](docs/USER-GUIDE.md) and a [browser demo](#browser-demo), but no OpenFX port.
 
 ## Build
 
-Needs CMake 3.15+, a C++17 compiler, and the FFGL SDK submodule.
+You'll need CMake 3.15+, a C++17 compiler and the FFGL SDK submodule.
 
 ```bash
 git clone --recursive https://github.com/stoatworks-labs/fiche
@@ -231,7 +226,7 @@ macOS builds are universal (Apple Silicon + Intel) by default; add
 
 ## Building and testing
 
-The offline harness renders the real plugin class headlessly, on a synthetic 60 fps
+The offline harness renders the plugin's own class headless, on a synthetic 60 fps
 clock:
 
 ```bash
@@ -245,8 +240,9 @@ python3 tools/sweep.py                                            # no control i
 tools/verify.sh                                                   # all of it, on a fresh universal build
 ```
 
-Every check takes `--size`; run it at 320×180 as well as the raster you care about.
-Footage goes through the real shaders with `--pipe`, in the fleet's frame format:
+Every check takes `--size`, so run it at 320×180 as well as whatever raster you care
+about. Footage goes through the plugin's shaders with `--pipe`, in the fleet's frame
+format:
 
 ```bash
 ffmpeg -i in.mov -vf fps=60 -f rawvideo -pix_fmt rgba -s 1920x1080 - \
@@ -259,18 +255,18 @@ See [`CLAUDE.md`](CLAUDE.md) for the full command reference and
 
 ## Browser demo
 
-**<https://fiche-demo.stoatworks-labs.com/>** runs the plugin itself, not a port of it:
-`source/Fiche.cpp` and everything it calls — the hand, the reader, the title font, the
-parameter table — with the FFGL SDK classes it uses, compiled unmodified to WebAssembly
+**<https://fiche-demo.stoatworks-labs.com/>** runs the plugin itself rather than a port:
+`source/Fiche.cpp` and everything it calls (the hand, the reader, the title font, the
+parameter table), with the FFGL SDK classes it uses, compiled unmodified to WebAssembly
 by `demo/tools/build-wasm.sh` (emscripten) and drawing with its own GLSL in WebGL2. The
-panel is read back from the plugin's own declarations. The page is the host: it sends
+panel is read back from the plugin's own declarations. The page plays host: it sends
 no beat (Sync keeps the plugin's own 120 BPM), its clock is the browser's, the clip is
 generated in the page, and six GL entry points are translated for WebGL2
-(`demo/wasm/gl_shim.cpp`). Compared once with `mftest --pipe` on the same frames, in
-Manual, over ten seconds of the Auto operator and on the filmed card, it agreed to one
-level in all but one pixel. `tools/verify.sh` fails if `demo/shaders.js` or any input of
-the `.wasm` has drifted from `source/`. It is a demo, not the plugin; the page lists
-everything it does not reproduce.
+(`demo/wasm/gl_shim.cpp`). I compared it once with `mftest --pipe` on the same frames,
+in Manual, over ten seconds of the Auto operator and on the filmed card, and it agreed
+to one level in all but one pixel. `tools/verify.sh` fails if `demo/shaders.js` or any
+input of the `.wasm` has drifted from `source/`. It's still a demo, not the plugin, and
+the page lists everything it doesn't reproduce.
 
 <!-- attributions:start -->
 This project is built on other people's work — see [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
